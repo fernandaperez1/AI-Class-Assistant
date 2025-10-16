@@ -325,3 +325,15 @@
     grid-template-columns: 1fr;
   }
 }
+
+/* Collapsible Header */
+.collapsible-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+.collapse-arrow {
+  font-size: 1.5rem;
+  transition: transform 0.2s ease;
+}
