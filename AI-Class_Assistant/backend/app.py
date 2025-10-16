@@ -107,6 +107,18 @@ def link_telegram():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/telegram/check/<int:chat_id>", methods=["GET"])
+def check_telegram_link(chat_id):
+    """Check if a Telegram chat_id is linked to a user"""
+    try:
+        user = db.get_user_by_telegram_chat_id(chat_id)
+        if user:
+            return jsonify(user), 200
+        return jsonify({"error": "Not linked"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/users/<int:user_id>/classes", methods=["GET"])
 def get_user_classes(user_id):
     """Get all classes for a user"""
