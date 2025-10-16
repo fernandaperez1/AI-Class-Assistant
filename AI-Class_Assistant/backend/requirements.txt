@@ -1,0 +1,9 @@
+flask
+flask-socketio
+flask-cors
+python-dotenv
+python-pptx
+psycopg2-binary
+requests
+python-telegram-bot==20.6
+eventlet

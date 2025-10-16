@@ -1,0 +1,271 @@
+"""
+Example Flask app integration with database operations
+This shows how to use the database functions in your Flask application
+"""
+import os
+from flask import Flask, request, jsonify
+from flask_socketio import SocketIO, emit
+from dotenv import load_dotenv
+from db import database as db
+
+# Load environment variables
+load_dotenv()
+
+app = Flask(__name__)
+
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
+PORT = int(os.getenv("PORT", 5000))
+HOST = os.getenv("HOST", "0.0.0.0")
+
+socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS)
+
+# Example REST API endpoints
+
+@app.route("/")
+def index():
+    return "WebSocket backend is running."
+
+
+@app.route("/api/users/<firebase_uid>", methods=["GET"])
+def get_user(firebase_uid):
+    """Get user by Firebase UID"""
+    try:
+        user = db.get_user_by_firebase_uid(firebase_uid)
+        if user:
+            return jsonify(user), 200
+        return jsonify({"error": "User not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/users", methods=["POST"])
+def create_user():
+    """Create a new user"""
+    try:
+        data = request.json
+        user = db.create_user(
+            firebase_uid=data["firebase_uid"],
+            email=data["email"]
+        )
+        return jsonify(user), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/users/<int:user_id>/link-code", methods=["POST"])
+def generate_link_code(user_id):
+    """Generate a one-time code for Telegram linking"""
+    try:
+        import random
+        import string
+        from datetime import datetime, timedelta
+        
+        # Generate a 6-character code
+        code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+        expires_at = datetime.now() + timedelta(minutes=15)  # Valid for 15 minutes
+        
+        result = db.generate_telegram_link_code(user_id, code, expires_at)
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/telegram/link", methods=["POST"])
+def link_telegram():
+    """Link Telegram account using one-time code"""
+    try:
+        data = request.json
+        user = db.link_telegram_account(
+            link_code=data["code"],
+            telegram_chat_id=data["telegram_chat_id"]
+        )
+        if user:
+            return jsonify(user), 200
+        return jsonify({"error": "Invalid or expired code"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/users/<int:user_id>/classes", methods=["GET"])
+def get_user_classes(user_id):
+    """Get all classes for a user"""
+    try:
+        classes = db.get_user_classes(user_id)
+        return jsonify(classes), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/classes", methods=["POST"])
+def create_class():
+    """Create a new class"""
+    try:
+        data = request.json
+        new_class = db.create_class(
+            user_id=data["user_id"],
+            subject=data["subject"],
+            difficulty_level=data["difficulty_level"],
+            class_name=data.get("class_name")
+        )
+        return jsonify(new_class), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/classes/<int:class_id>", methods=["GET"])
+def get_class(class_id):
+    """Get class by ID"""
+    try:
+        class_data = db.get_class_by_id(class_id)
+        if class_data:
+            return jsonify(class_data), 200
+        return jsonify({"error": "Class not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/classes/<int:class_id>/presentation", methods=["POST"])
+def create_presentation(class_id):
+    """Create a presentation for a class"""
+    try:
+        data = request.json
+        presentation = db.create_presentation(
+            class_id=class_id,
+            original_pptx_path=data.get("pptx_path")
+        )
+        return jsonify(presentation), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/presentations/<int:presentation_id>/start", methods=["POST"])
+def start_presentation(presentation_id):
+    """Start a presentation"""
+    try:
+        result = db.start_presentation(presentation_id)
+        if result:
+            return jsonify(result), 200
+        return jsonify({"error": "Presentation not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/presentations/<int:presentation_id>/end", methods=["POST"])
+def end_presentation(presentation_id):
+    """End a presentation"""
+    try:
+        result = db.end_presentation(presentation_id)
+        if result:
+            return jsonify(result), 200
+        return jsonify({"error": "Presentation not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/presentations/<int:presentation_id>/questions", methods=["POST"])
+def add_question(presentation_id):
+    """Add a question and answer to a presentation"""
+    try:
+        data = request.json
+        question = db.add_question(
+            presentation_id=presentation_id,
+            question=data["question"],
+            answer=data["answer"],
+            slide_index=data.get("slide_index")
+        )
+        return jsonify(question), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/presentations/<int:presentation_id>/questions", methods=["GET"])
+def get_questions(presentation_id):
+    """Get all questions for a presentation"""
+    try:
+        questions = db.get_presentation_questions(presentation_id)
+        return jsonify(questions), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# WebSocket events
+
+@socketio.on("connect")
+def handle_connect():
+    print("Client connected")
+    emit("message", {"msg": "Hello from Flask!"})
+
+
+@socketio.on("send_message")
+def handle_send_message(data):
+    print("Received from frontend:", data)
+    emit("response", {"msg": f"Backend received: {data['msg']}"}, broadcast=True)
+
+
+@socketio.on("bot_message")
+def handle_bot_message(data):
+    """
+    Handle messages from the Telegram bot
+    Expected data:
+    {
+        "telegram_chat_id": int,
+        "question": str,
+        "presentation_id": int,
+        "slide_index": int (optional)
+    }
+    """
+    print("Received from bot:", data)
+    
+    try:
+        # Get user from telegram chat ID
+        user = db.get_user_by_telegram_chat_id(data["telegram_chat_id"])
+        if not user:
+            emit("bot_response", {"error": "User not found"})
+            return
+        
+        # Here you would integrate with OpenAI/Gemini to generate an answer
+        # For now, just echo the question
+        answer = f"AI response to: {data['question']}"
+        
+        # Save the question and answer
+        if "presentation_id" in data:
+            db.add_question(
+                presentation_id=data["presentation_id"],
+                question=data["question"],
+                answer=answer,
+                slide_index=data.get("slide_index")
+            )
+        
+        emit("bot_response", {
+            "answer": answer,
+            "user_id": user["id"]
+        })
+        
+    except Exception as e:
+        print(f"Error handling bot message: {e}")
+        emit("bot_response", {"error": str(e)})
+
+
+@socketio.on("add_ai_slide")
+def handle_add_ai_slide(data):
+    """
+    Handle adding an AI-generated slide
+    Expected data:
+    {
+        "presentation_id": int,
+        "slide_index": int
+    }
+    """
+    try:
+        result = db.add_ai_generated_slide(
+            presentation_id=data["presentation_id"],
+            slide_index=data["slide_index"]
+        )
+        emit("slide_added", result, broadcast=True)
+    except Exception as e:
+        print(f"Error adding AI slide: {e}")
+        emit("error", {"error": str(e)})
+
+
+if __name__ == "__main__":
+    socketio.run(app, host=HOST, port=PORT)
