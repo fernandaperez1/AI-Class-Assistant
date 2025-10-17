@@ -214,15 +214,50 @@ def create_presentation(class_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/presentations/<int:presentation_id>", methods=["GET"])
+def get_presentation(presentation_id):
+    """Get presentation details by ID"""
+    try:
+        presentation = db.get_presentation_by_id(presentation_id)
+        if presentation:
+            return jsonify(presentation), 200
+        return jsonify({"error": "Presentation not found"}), 404
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/presentations/<int:presentation_id>/start", methods=["POST"])
 def start_presentation(presentation_id):
     """Start a presentation"""
     try:
+        data = request.json or {}
+        telegram_chat_id = data.get("telegram_chat_id")
+        
+        print(f"Starting presentation {presentation_id}")
+        print(f"Request data: {data}")
+        print(f"Telegram chat ID: {telegram_chat_id}")
+        
         result = db.start_presentation(presentation_id)
         if result:
+            presentation = db.get_presentation_by_id(presentation_id)
+            slide_count = presentation.get("slide_count", 0)
+            
+            # Emit WebSocket event to notify bot (need to test with concurrent users)
+            if telegram_chat_id:
+                print(f"Emitting presentation:started event to bot for chat {telegram_chat_id}")
+                socketio.emit("presentation:started", {
+                    "presentation_id": presentation_id,
+                    "telegram_chat_id": telegram_chat_id,
+                    "slide_count": slide_count,
+                    "current_slide": 1
+                })
+            else:
+                print("No telegram_chat_id provided, skipping bot notification")
+            
             return jsonify(result), 200
         return jsonify({"error": "Presentation not found"}), 404
     except Exception as e:
+        print(f"Error starting presentation: {e}")
         return jsonify({"error": str(e)}), 500
 
 
@@ -230,8 +265,26 @@ def start_presentation(presentation_id):
 def end_presentation(presentation_id):
     """End a presentation"""
     try:
+        data = request.json or {}
+        telegram_chat_id = data.get("telegram_chat_id")
+        
+        print(f"Ending presentation {presentation_id}")
+        print(f"Request body: {data}")
+        print(f"Telegram chat ID: {telegram_chat_id}")
+        
         result = db.end_presentation(presentation_id)
         if result:
+            # socket event to notify bot it ended
+            if telegram_chat_id:
+                print(f"Emitting presentation:ended event to bot for chat {telegram_chat_id}")
+                socketio.emit("presentation:ended", {
+                    "presentation_id": presentation_id,
+                    "telegram_chat_id": telegram_chat_id,
+                    "duration_seconds": result.get("duration_seconds", 0)
+                })
+            else:
+                print("No telegram_chat_id provided, skipping bot notification")
+            
             return jsonify(result), 200
         return jsonify({"error": "Presentation not found"}), 404
     except Exception as e:
@@ -241,10 +294,10 @@ def end_presentation(presentation_id):
 @app.route("/api/presentations/<int:presentation_id>/control", methods=["POST"])
 def control_presentation(presentation_id):
     """
-    Body esperado:
+    Expected body:
     {
       "action": "next" | "prev" | "goto",
-      "target_slide": int (solo para goto),
+      "target_slide": int (for the goto),
       "telegram_chat_id": int
     }
     """
@@ -270,7 +323,7 @@ def control_presentation(presentation_id):
         new_slide = min(current_slide + 1, total_slides)
     elif action == "prev":
         new_slide = max(current_slide - 1, 1)
-    else:  # action == "goto"
+    else:
         target = data.get("target_slide")
         if not isinstance(target, int) or not (1 <= target <= total_slides):
             return jsonify({"error": "Invalid target slide"}), 400
@@ -408,6 +461,144 @@ def get_presentation_info(class_id):
         return jsonify({"error": str(e)}), 500
 
 
+# AI ------------------------------------------------------------------------------------------------------------------- lero lero lero
+
+@app.route("/api/ai/create-example", methods=["POST"])
+def create_example():
+    """
+    Generate an example based on slide content and user input
+    still gotta Implement AI logic to generate examples
+    """
+    try:
+        data = request.json
+        presentation_id = data.get("presentation_id")
+        slide_number = data.get("slide_number")
+        telegram_chat_id = data.get("telegram_chat_id")
+        user_input = data.get("user_input")  # Text description or voice file_id (havent implemented the voice yet)
+        input_type = data.get("input_type", "text")  # "text" or "audio"
+        voice_file_id = data.get("voice_file_id")  # Telegram file_id for voice messages
+        
+        print(f"AI: Creating example for presentation {presentation_id}, slide {slide_number}")
+        print(f"    Input type: {input_type}, User request: {user_input[:50] if user_input and input_type=='text' else 'voice message'}")
+        
+        # will put all of the ai stuff here
+        # 1. Get slide content from presentation
+        # 2. If input_type is "audio", transcribe the voice message using Whisper or similar
+        #    - Use voice_file_id to download audio from Telegram
+        #    - Transcribe audio to text
+        # 3. gen example
+        # 4. Return formatted example
+        
+        # Placeholder
+        example = (
+            f"This is a placeholder example based on your request:\n"
+            f"_{user_input if input_type == 'text' else 'Voice message received'}_\n\n"
+            "**Example Problem:**\n"
+            "Given the concepts from this slide, try to solve...\n\n"
+            "**Solution:**\n"
+            "The answer would be...\n\n"
+            "_Note: AI implementation pending. Will use slide content + your input to generate real examples._"
+        )
+        
+        return jsonify({
+            "presentation_id": presentation_id,
+            "slide_number": slide_number,
+            "example": example
+        }), 200
+        
+    except Exception as e:
+        print(f"Error creating example: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ai/create-quiz", methods=["POST"])
+def create_quiz():
+    """
+    Generate a quiz based on slide content
+    need to implement AI logic to generate quiz questions
+    """
+    try:
+        data = request.json
+        presentation_id = data.get("presentation_id")
+        slide_number = data.get("slide_number")
+        telegram_chat_id = data.get("telegram_chat_id")
+        
+        print(f"AI: Creating quiz for presentation {presentation_id}, slide {slide_number}")
+        
+        # same, will implement AI logic here
+        # 1. Get slide content from presentation
+        # 2. Use OpenAI/Gemini to generate quiz questions
+        # 3. Return formatted quiz
+        
+        # Placeholder response
+        quiz = (
+            "This is a placeholder quiz.\n\n"
+            "**Question 1:**\n"
+            "What is the main concept covered in this slide?\n\n"
+            "**Question 2:**\n"
+            "Explain the key points discussed.\n\n"
+            "**Question 3:**\n"
+            "How would you apply this concept?\n\n"
+            "_Note: AI implementation pending_"
+        )
+        
+        return jsonify({
+            "presentation_id": presentation_id,
+            "slide_number": slide_number,
+            "quiz": quiz
+        }), 200
+        
+    except Exception as e:
+        print(f"Error creating quiz: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ai/create-quiz-alternatives", methods=["POST"])
+def create_quiz_alternatives():
+    """
+    Generate a multiple choice quiz based on slide content
+    Implement AI logic to generate quiz with alternatives (will add asd the last feature before audio)
+    """
+    try:
+        data = request.json
+        presentation_id = data.get("presentation_id")
+        slide_number = data.get("slide_number")
+        telegram_chat_id = data.get("telegram_chat_id")
+        
+        print(f"AI: Creating quiz with alternatives for presentation {presentation_id}, slide {slide_number}")
+        
+        # 1. Get slide content from presentation
+        # 2. Use OpenAI/Gemini to generate multiple choice questions
+        # 3. Return formatted quiz with alternatives
+        
+        # Placeholder response
+        quiz = (
+            "This is a placeholder multiple choice quiz.\n\n"
+            "**Question 1:** What is the main topic of this slide?\n"
+            "A) Option 1\n"
+            "B) Option 2\n"
+            "C) Option 3\n"
+            "D) Option 4\n\n"
+            "**Question 2:** Which statement is correct?\n"
+            "A) Option 1\n"
+            "B) Option 2\n"
+            "C) Option 3\n"
+            "D) Option 4\n\n"
+            "**Answers:** 1-C, 2-B\n\n"
+            "_Note:placeholder"
+        )
+        
+        return jsonify({
+            "presentation_id": presentation_id,
+            "slide_number": slide_number,
+            "quiz": quiz
+        }), 200
+        
+    except Exception as e:
+        print(f"Error creating quiz with alternatives: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # WebSocket events
 
 @socketio.on("connect")
@@ -443,7 +634,7 @@ def handle_bot_message(data):
             emit("bot_response", {"error": "User not found"})
             return
         
-        # simulated the ai ans, will add it ltr
+        # simulated the ai ans, will add it ltr (or never xd, not using that endpoint anymore)
         answer = f"AI response to: {data['question']}"
         
         # Save the question and answer
@@ -465,6 +656,7 @@ def handle_bot_message(data):
         emit("bot_response", {"error": str(e)})
 
 
+#wont use this now, will add it from another one of the funcs
 @socketio.on("add_ai_slide")
 def handle_add_ai_slide(data):
     """
@@ -488,4 +680,4 @@ def handle_add_ai_slide(data):
 
 if __name__ == "__main__":
     print(f"Starting Class Assistant backend on {HOST}:{PORT}")
-    socketio.run(app, host=HOST, port=PORT, debug=True)
+    socketio.run(app, host=HOST, port=PORT, debug=True)  #reminder for me, turn the debug off after its doen
