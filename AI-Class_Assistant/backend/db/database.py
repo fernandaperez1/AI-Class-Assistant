@@ -424,7 +424,6 @@ def get_presentation_owner(presentation_id):
         row = cursor.fetchone()
         return row["user_id"] if row else None
 
-# backend/db/database.py
 def update_current_slide(presentation_id: int, slide: int):
     with get_db_cursor() as cursor:
         cursor.execute(
@@ -443,7 +442,7 @@ def update_current_slide(presentation_id: int, slide: int):
 
 def update_slide_metadata(presentation_id: int, *, current_slide: int | None = None,
                           slide_count: int | None = None):
-    """Actualiza columnas opcionales de la presentación y devuelve los valores nuevos."""
+    """Updates the current slide and the slide count."""
     fields = []
     values = []
 
@@ -456,7 +455,7 @@ def update_slide_metadata(presentation_id: int, *, current_slide: int | None = N
         values.append(slide_count)
 
     if not fields:
-        return None  # Nada que actualizar
+        return None
 
     query = f"""
         UPDATE presentations

@@ -61,7 +61,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_data = response.json()
             # User is already linked
             welcome_message = (
-                f"*Welcome back to Class Assistant Bot!* 🎓\n\n"
+                f"*Welcome back to TutorFlow Bot!* 🎓\n\n"
                 f"✅ Your account is linked to: `{user_data.get('email', 'your account')}`\n\n"
                 "*Available Commands:*\n"
                 "• `/help` - Show help message\n"
@@ -72,7 +72,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             # User is not linked yet - show button
             welcome_message = (
-                "*Welcome to Class Assistant Bot!* 🎓\n\n"
+                "*Welcome to TutorFlow Bot!* 🎓\n\n"
                 "I'm your AI-powered educational assistant.\n\n"
                 "To get started, you need to link your Telegram account with the web app.\n\n"
                 "*How to link:*\n"
@@ -117,7 +117,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if is_linked:
         help_message = (
-            "*Class Assistant Bot Help*\n\n"
+            "*TutorFlow Bot Help*\n\n"
             "*During Presentations:*\n"
             "• Ask questions naturally\n"
             "• Get AI-generated answers\n"
@@ -129,7 +129,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
     else:
         help_message = (
-            "*Class Assistant Bot Help*\n\n"
+            "*TutorFlow Bot Help*\n\n"
             "*Linking Your Account:*\n"
             "1. Log in to the web app\n"
             "2. Generate a link code\n"
@@ -347,7 +347,7 @@ async def require_linked_user(update, context):
     chat_id = update.effective_chat.id
     resp = requests.get(f"{BACKEND_API_URL}/api/telegram/check/{chat_id}", timeout=5)
     if resp.status_code != 200:
-        await update.message.reply_text("⚠️ Primero vincula tu cuenta con /link.")
+        await update.message.reply_text("⚠️ Please link your account first with /link.")
         return None
     return resp.json()
 
@@ -365,10 +365,10 @@ async def start_presentation_cmd(update, context):
             json={"telegram_chat_id": update.effective_chat.id},
             timeout=5,
         )
-        context.user_data["presentation_id"] = presentation_id  # guarda el id activo
-        await update.message.reply_text("✅ Presentación iniciada.")
+        context.user_data["presentation_id"] = presentation_id  # keep active ID
+        await update.message.reply_text("✅ Presentation started.")
     except requests.RequestException:
-        await update.message.reply_text("Error al conectar con el backend.")
+        await update.message.reply_text("Error connecting to the backend.")
 
 
 async def next_slide_cmd(update, context):
@@ -379,7 +379,7 @@ async def prev_slide_cmd(update, context):
 
 async def goto_slide_cmd(update, context):
     if not context.args:
-        await update.message.reply_text("Uso: /goto 5")
+        await update.message.reply_text("Usage: /goto 5")
         return
     await _send_control_command(
         update, context, "goto", target_slide=int(context.args[0])
@@ -423,9 +423,9 @@ async def _send_control_command(update: Update, context: ContextTypes.DEFAULT_TY
     )
     if resp.ok:
         slide = resp.json()["current_slide"]
-        await update.message.reply_text(f"Ahora en la diapositiva {slide}.")
+        await update.message.reply_text(f"Now on slide {slide}.")
     else:
-        await update.message.reply_text("No pude actualizar la presentación.")
+        await update.message.reply_text("Could not update the presentation.")
 
 async def end_presentation_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = await require_linked_user(update, context)
@@ -443,11 +443,11 @@ async def end_presentation_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
             timeout=5,
         )
         if resp.status_code == 200:
-            await update.message.reply_text("✅ Presentación finalizada.")
+            await update.message.reply_text("✅ Presentation ended.")
         else:
-            await update.message.reply_text("No pude finalizar la presentación.")
+            await update.message.reply_text("Could not finish the presentation.")
     except requests.RequestException:
-        await update.message.reply_text("Error al conectar con el backend.")
+        await update.message.reply_text("Error connecting to the backend.")
 
 async def _request_slide_image(update: Update, context: ContextTypes.DEFAULT_TYPE, offset: int):
     user = await require_linked_user(update, context)
@@ -462,32 +462,32 @@ async def _request_slide_image(update: Update, context: ContextTypes.DEFAULT_TYP
             timeout=10,
         )
         if resp.status_code != 200:
-            await update.message.reply_text("No pude obtener la siguiente diapositiva.")
+            await update.message.reply_text("Could not retrieve the next slide.")
             return
 
         image_bytes = resp.content
         await update.message.reply_photo(image=image_bytes)
     except requests.RequestException:
-        await update.message.reply_text("Error al conectar con el backend.")
+        await update.message.reply_text("Error connecting to the backend.")
 
 
 async def resolve_presentation_id(update, context, user):
     """
-    Devuelve el ID de la presentación que se va a controlar.
-    Primero mira el JSON del backend, luego lo que hay en context.user_data.
+    Return the ID of the presentation that will be controlled.
+    First looks at the backend JSON response, then falls back to the value stored in context.user_data.
     """
     presentation_id = user.get("active_presentation_id")
     if presentation_id:
         context.user_data["presentation_id"] = presentation_id
         return presentation_id
 
-    # Fallback: usa el último id que guardamos
+    # Fallback: use the last id we stored
     cached = context.user_data.get("presentation_id")
     if cached:
         return cached
 
     await update.message.reply_text(
-        "No hay presentación activa asociada. Iníciala desde la web o con /start_presentation."
+        "There is no active presentation associated. Start one from the web app or with /start_presentation."
     )
     return None
 
@@ -518,7 +518,7 @@ def main():
     # Add message handler (must be last)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("Class Assistant Bot is starting...")
+    print("TutorFlow Bot is starting...")
     print("✅ Bot is ready and listening for messages!")
     
     app.run_polling()

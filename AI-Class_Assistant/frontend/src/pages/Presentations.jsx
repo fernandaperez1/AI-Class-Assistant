@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import * as pdfjsLib from 'pdfjs-dist';
-import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
+import * as pdfjsLib from "pdfjs-dist";
+import workerUrl from "pdfjs-dist/build/pdf.worker.min.js?url";
 import "./Presentations.css";
 import socket from "../sockets/socket";
 import { 
@@ -12,7 +12,7 @@ import {
 } from "../services/presentations";
 import { API_URL } from "../config";
 
-pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorker;
+pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
 function Presentations({ user }) {
   const { classId } = useParams();
