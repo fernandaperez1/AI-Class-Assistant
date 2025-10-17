@@ -1,0 +1,90 @@
+import { API_URL } from "../config";
+
+/**
+ * Get presentation information for a class
+ */
+export const getPresentationInfo = async (classId) => {
+  const response = await fetch(
+    `${API_URL}/api/classes/${classId}/presentation-info`
+  );
+  if (!response.ok) {
+    throw new Error("Failed to fetch presentation info");
+  }
+  return response.json();
+};
+
+export const convertPresentationToPDF = async (presentationId) => {
+  const response = await fetch(
+    `${API_URL}/api/presentations/${presentationId}/convert`,
+    {
+      method: "POST",
+    }
+  );
+  if (!response.ok) {
+    throw new Error("Failed to convert presentation");
+  }
+  return response.json();
+};
+
+export const getPresentationText = async (presentationId) => {
+  const response = await fetch(
+    `${API_URL}/api/presentations/${presentationId}/text`
+  );
+  if (!response.ok) {
+    throw new Error("Failed to fetch presentation text");
+  }
+  return response.json();
+};
+
+export const startPresentation = async (presentationId) => {
+  const response = await fetch(
+    `${API_URL}/api/presentations/${presentationId}/start`,
+    {
+      method: "POST",
+    }
+  );
+  if (!response.ok) {
+    throw new Error("Failed to start presentation");
+  }
+  return response.json();
+};
+
+export const endPresentation = async (presentationId) => {
+  const response = await fetch(
+    `${API_URL}/api/presentations/${presentationId}/end`,
+    {
+      method: "POST",
+    }
+  );
+  if (!response.ok) {
+    throw new Error("Failed to end presentation");
+  }
+  return response.json();
+};
+
+export const getPresentationQuestions = async (presentationId) => {
+  const response = await fetch(
+    `${API_URL}/api/presentations/${presentationId}/questions`
+  );
+  if (!response.ok) {
+    throw new Error("Failed to fetch questions");
+  }
+  return response.json();
+};
+
+export const addQuestion = async (presentationId, questionData) => {
+  const response = await fetch(
+    `${API_URL}/api/presentations/${presentationId}/questions`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(questionData),
+    }
+  );
+  if (!response.ok) {
+    throw new Error("Failed to add question");
+  }
+  return response.json();
+};

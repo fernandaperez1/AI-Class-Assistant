@@ -1,21 +1,17 @@
-"""
-Example Flask app integration with database operations
-This shows how to use the database functions in your Flask application
-"""
 import os
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
 from db import database as db
+from pptx_utils import extract_text_from_pptx, convert_pptx_to_pdf, get_slide_count
 
-# Load environment variables
 load_dotenv()
 
 app = Flask(__name__)
 
-# Enable CORS for all routes
-CORS(app, resources={r"/api/*": {"origins": "*"}})
+# Enable CORS for all routes (just doing for debug, will delete ltr)
+# CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 PORT = int(os.getenv("PORT", 5000))
@@ -264,6 +260,101 @@ def get_questions(presentation_id):
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/presentations/<int:presentation_id>/text", methods=["GET"])
+def get_presentation_text(presentation_id):
+    """Get text content from all slides in the presentation"""
+    try:
+        presentation = db.get_presentation_by_id(presentation_id)
+        if not presentation:
+            return jsonify({"error": "Presentation not found"}), 404
+        
+        pptx_path = presentation.get("original_pptx_path")
+        if not pptx_path or not os.path.exists(pptx_path):
+            return jsonify({"error": "PPTX file not found"}), 404
+        
+        slides_text = extract_text_from_pptx(pptx_path)
+        return jsonify({
+            "presentation_id": presentation_id,
+            "slide_count": len(slides_text),
+            "slides": slides_text
+        }), 200
+    except Exception as e:
+        print(f"Error extracting text: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/presentations/<int:presentation_id>/convert", methods=["POST"])
+def convert_presentation_to_pdf(presentation_id):
+    """Convert PPTX to PDF and return the PDF path"""
+    try:
+        presentation = db.get_presentation_by_id(presentation_id)
+        if not presentation:
+            return jsonify({"error": "Presentation not found"}), 404
+        
+        pptx_path = presentation.get("original_pptx_path")
+        if not pptx_path or not os.path.exists(pptx_path):
+            return jsonify({"error": "PPTX file not found"}), 404
+        
+        output_dir = "./slides"
+        pdf_path = convert_pptx_to_pdf(pptx_path, output_dir)
+        
+        slide_count = get_slide_count(pptx_path)
+
+        pdf_filename = os.path.basename(pdf_path)
+        pdf_url = f"/api/presentations/{presentation_id}/pdf/{pdf_filename}"
+        
+        return jsonify({
+            "presentation_id": presentation_id,
+            "slide_count": slide_count,
+            "pdf_url": pdf_url
+        }), 200
+    except Exception as e:
+        print(f"Error converting presentation: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/presentations/<int:presentation_id>/pdf/<path:filename>", methods=["GET"])
+def serve_pdf(presentation_id, filename):
+    try:
+        file_path = os.path.join("./slides", filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({"error": "PDF not found"}), 404
+        
+        return send_file(file_path, mimetype='application/pdf')
+    except Exception as e:
+        print(f"Error serving PDF: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/classes/<int:class_id>/presentation-info", methods=["GET"])
+def get_presentation_info(class_id):
+    """Get presentation information including slide count and availability, gotta complete this for the last deliverable, cz its unfinished"""
+    try:
+        presentation = db.get_presentation_by_class_id(class_id)
+        if not presentation:
+            return jsonify({"error": "No presentation found for this class"}), 404
+        
+        pptx_path = presentation.get("original_pptx_path")
+        if not pptx_path or not os.path.exists(pptx_path):
+            return jsonify({"error": "PPTX file not found"}), 404
+        
+        slide_count = get_slide_count(pptx_path)
+        
+        return jsonify({
+            "presentation_id": presentation["id"],
+            "class_id": class_id,
+            "slide_count": slide_count,
+            "pptx_path": pptx_path,
+            "started_at": presentation.get("started_at"),
+            "ended_at": presentation.get("ended_at"),
+            "duration_seconds": presentation.get("duration_seconds")
+        }), 200
+    except Exception as e:
+        print(f"Error getting presentation info: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
 # WebSocket events
 
 @socketio.on("connect")
@@ -281,7 +372,7 @@ def handle_send_message(data):
 @socketio.on("bot_message")
 def handle_bot_message(data):
     """
-    Handle messages from the Telegram bot
+    Handle messages from the Telegram bot (need to complete it, it will be a pretty big func)
     Expected data:
     {
         "telegram_chat_id": int,
@@ -299,8 +390,7 @@ def handle_bot_message(data):
             emit("bot_response", {"error": "User not found"})
             return
         
-        # Here you would integrate with OpenAI/Gemini to generate an answer
-        # For now, just echo the question
+        # simulated the ai ans, will add it ltr
         answer = f"AI response to: {data['question']}"
         
         # Save the question and answer

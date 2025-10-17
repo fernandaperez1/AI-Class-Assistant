@@ -2,3 +2,9 @@
 *node_modules
 *__pycache__
 *.pptx
+backend/uploads/*
+!backend/uploads/README.md
+!backend/uploads/.gitkeep
+backend/slides/*
+!backend/slides/README.md
+!backend/slides/.gitkeep
