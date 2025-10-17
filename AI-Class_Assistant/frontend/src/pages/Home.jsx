@@ -10,8 +10,44 @@ export default function HomePage({ user }) {
   const [codeExpiry, setCodeExpiry] = useState(null);
   const [isTelegramOpen, setIsTelegramOpen] = useState(false);
   const [showModal, setShowModal] = useState(false);
+  const [classes, setClasses] = useState([]);
 
   const isTelegramLinked = user?.telegram_chat_id !== null;
+
+  const fetchClasses = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/users/${user.id}/classes`);
+      if (!res.ok) throw new Error("Failed to fetch classes");
+      const data = await res.json();
+      setClasses(data);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to load classes");
+    }
+  };
+
+  useEffect(() => {
+    if (user?.id) fetchClasses();
+  }, [user]);
+
+  const handleDeleteClass = async (classId) => {
+    if (!window.confirm("Are you sure you want to delete this class?")) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/classes/${classId}/delete`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: user.id }),
+      });
+
+      if (!response.ok) throw new Error("Failed to delete class");
+
+      setClasses(classes.filter((c) => c.id !== classId));
+    } catch (err) {
+      console.error(err);
+      alert("Error deleting class. Please try again.");
+    }
+  };
 
   const generateLinkCode = async () => {
     setLoading(true);
@@ -68,7 +104,8 @@ export default function HomePage({ user }) {
   const toggleTelegram = () => setIsTelegramOpen(!isTelegramOpen);
 
   const handleClassCreated = (newClass) => {
-    console.log("Class created:", newClass);
+    setClasses([...classes, newClass]);
+    setShowModal(false);
   };
 
   return (
@@ -163,15 +200,50 @@ export default function HomePage({ user }) {
             )}
           </div>
         </div>
-        <div className="features-section">
-          <h2>Your Classes</h2>
+<div className="features-section">
+  <h2>Your Classes</h2>
+
+  {/* Create Class Button */}
+  <div className="create-class-button-wrapper">
+    <button
+      className="generate-button"
+      onClick={() => setShowModal(true)}
+    >
+      + Create New Class
+    </button>
+  </div>
+
+  {/* Classes Grid */}
+  <div className="features-grid">
+    {classes.map((cls) => (
+      <div key={cls.id} className="feature-card">
+        <h3>{cls.class_name || "Untitled Class"}</h3>
+        <p>Subject: {cls.subject}</p>
+        <p>Difficulty: {cls.difficulty_level}</p>
+        <div className="class-buttons">
           <button
-            className="generate-button"
-            onClick={() => setShowModal(true)}
+            className="info-button"
+            onClick={() => console.log("Info", cls.id)}
           >
-            ➕ Create New Class
+            Info
+          </button>
+          <button
+            className="delete-button"
+            onClick={() => handleDeleteClass(cls.id)}
+          >
+            Delete
+          </button>
+          <button
+            className="start-button"
+            onClick={() => console.log("Start class", cls.id)}
+          >
+            Start
           </button>
         </div>
+      </div>
+    ))}
+  </div>
+</div>
 
         {showModal && (
           <CreateClassModal

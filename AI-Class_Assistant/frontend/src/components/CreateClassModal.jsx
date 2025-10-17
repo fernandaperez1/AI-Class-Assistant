@@ -33,17 +33,39 @@ export default function CreateClassModal({ userId, onClose, onClassCreated }) {
     formDataToSend.append("user_id", userId);
     formDataToSend.append("pptx_file", formData.pptx_file);
 
-    try {
+  try {
       const response = await fetch(`${API_URL}/api/classes`, {
         method: "POST",
-        body: formDataToSend,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          class_name: formData.class_name,
+          subject: formData.subject,
+          difficulty_level: formData.difficulty_level,
+          user_id: userId,
+        }),
       });
 
       if (!response.ok) throw new Error("Failed to create class");
 
       const newClass = await response.json();
-      onClassCreated(newClass);
-      onClose();
+
+    if (formData.pptx_file) {
+      const fileFormData = new FormData();
+      fileFormData.append("pptx_file", formData.pptx_file);
+
+      const uploadResponse = await fetch(
+        `${API_URL}/api/classes/${newClass.id}/presentation`,
+        {
+          method: "POST",
+          body: fileFormData,
+        }
+      );
+
+      if (!uploadResponse.ok) throw new Error("Failed to upload presentation");
+    }
+
+    onClassCreated(newClass);
+    onClose();
     } catch (err) {
       console.error(err);
       setError("Error creating class. Please try again.");

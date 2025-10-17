@@ -19,7 +19,7 @@ export default function Navbar({ user }) {
     <nav className="navbar">
       <div className="navbar-container">
         <Link className="navbar-brand" to="/home">
-          🎓 Class Assistant
+          🎓 TutorFlow
         </Link>
 
         <div className="navbar-menu">

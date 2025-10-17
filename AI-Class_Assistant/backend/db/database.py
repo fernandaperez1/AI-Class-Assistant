@@ -1,6 +1,3 @@
-"""
-Database connection and utility functions for Class Assistant Platform
-"""
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -147,6 +144,47 @@ def create_class(user_id, subject, difficulty_level, class_name=None):
             (user_id, class_name, subject, difficulty_level)
         )
         return dict(cursor.fetchone())
+    
+
+def delete_class(class_id, user_id):
+    """Delete a class and its associated PPTX file if it exists."""
+    try:
+        with get_db_cursor() as cursor:
+            # Get the associated pptx file path
+            cursor.execute(
+                """
+                SELECT p.original_pptx_path
+                FROM presentations p
+                JOIN classes c ON p.class_id = c.id
+                WHERE c.id = %s AND c.user_id = %s
+                """,
+                (class_id, user_id)
+            )
+            result = cursor.fetchone()
+            if result and result.get("original_pptx_path"):
+                pptx_path = result["original_pptx_path"]
+                if os.path.exists(pptx_path):
+                    try:
+                        os.remove(pptx_path)
+                        print(f"Deleted PPTX file: {pptx_path}")
+                    except Exception as e:
+                        print(f"Warning: Could not delete file {pptx_path}: {e}")
+
+            cursor.execute(
+                """
+                DELETE FROM classes
+                WHERE id = %s AND user_id = %s
+                RETURNING id, user_id
+                """,
+                (class_id, user_id)
+            )
+
+            result = cursor.fetchone()
+            return dict(result) if result else None
+
+    except Exception as e:
+        print("DB error:", e)
+        raise
 
 
 def get_class_by_id(class_id):
@@ -206,11 +244,6 @@ def update_class(class_id, **kwargs):
         return dict(result) if result else None
 
 
-def delete_class(class_id):
-    """Delete a class"""
-    with get_db_cursor() as cursor:
-        cursor.execute("DELETE FROM classes WHERE id = %s", (class_id,))
-        return cursor.rowcount > 0
 
 
 # Presentation operations

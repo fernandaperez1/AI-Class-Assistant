@@ -23,7 +23,6 @@ HOST = os.getenv("HOST", "0.0.0.0")
 
 socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS)
 
-# Example REST API endpoints
 
 @app.route("/")
 def index():
@@ -142,6 +141,28 @@ def create_class():
         )
         return jsonify(new_class), 201
     except Exception as e:
+        return jsonify({"error": str(e)}), 500  
+    
+@app.route("/api/classes/<int:class_id>/delete", methods=["DELETE"])
+def delete_class_endpoint(class_id):
+    """Delete a class"""
+    try:
+        data = request.json
+        user_id = data.get("user_id")
+        if not user_id:
+            return jsonify({"error": "user_id is required"}), 400
+
+        class_return = db.delete_class(class_id, user_id)
+        print("DEBUG")
+        print(class_return)
+        if class_return:
+            return jsonify(class_return), 200
+        else:
+            return jsonify({"error": "Class not found or not authorized"}), 404
+
+    except Exception as e:
+        print("the exception is")
+        print(e)
         return jsonify({"error": str(e)}), 500
 
 
@@ -157,17 +178,39 @@ def get_class(class_id):
         return jsonify({"error": str(e)}), 500
 
 
+# @app.route("/api/classes/<int:class_id>/presentation", methods=["POST"])
+# def create_presentation(class_id):
+#     """Create a presentation for a class"""
+#     try:
+#         data = request.json
+#         presentation = db.create_presentation(
+#             class_id=class_id,
+#             original_pptx_path=data.get("pptx_path")
+#         )
+#         return jsonify(presentation), 201
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
+
+# file upload pptx
 @app.route("/api/classes/<int:class_id>/presentation", methods=["POST"])
 def create_presentation(class_id):
-    """Create a presentation for a class"""
+    """Create a presentation for a class from uploaded PPTX"""
     try:
-        data = request.json
+        pptx_file = request.files.get("pptx_file")
+        if not pptx_file:
+            return jsonify({"error": "No file uploaded"}), 400
+
+        save_path = f"./uploads/class_{class_id}_{pptx_file.filename}"
+        pptx_file.save(save_path)
+
         presentation = db.create_presentation(
             class_id=class_id,
-            original_pptx_path=data.get("pptx_path")
+            original_pptx_path=save_path
         )
+
         return jsonify(presentation), 201
     except Exception as e:
+        print("Error uploading PPTX:", e)
         return jsonify({"error": str(e)}), 500
 
 
