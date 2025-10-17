@@ -343,6 +343,155 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(response, parse_mode='Markdown')
 
 
+async def require_linked_user(update, context):
+    chat_id = update.effective_chat.id
+    resp = requests.get(f"{BACKEND_API_URL}/api/telegram/check/{chat_id}", timeout=5)
+    if resp.status_code != 200:
+        await update.message.reply_text("⚠️ Primero vincula tu cuenta con /link.")
+        return None
+    return resp.json()
+
+async def start_presentation_cmd(update, context):
+    user = await require_linked_user(update, context)
+    if not user:
+        return
+    presentation_id = await resolve_presentation_id(update, context, user)
+    if not presentation_id:
+        return
+
+    try:
+        requests.post(
+            f"{BACKEND_API_URL}/api/presentations/{presentation_id}/start",
+            json={"telegram_chat_id": update.effective_chat.id},
+            timeout=5,
+        )
+        context.user_data["presentation_id"] = presentation_id  # guarda el id activo
+        await update.message.reply_text("✅ Presentación iniciada.")
+    except requests.RequestException:
+        await update.message.reply_text("Error al conectar con el backend.")
+
+
+async def next_slide_cmd(update, context):
+    await _send_control_command(update, context, "next")
+
+async def prev_slide_cmd(update, context):
+    await _send_control_command(update, context, "prev")
+
+async def goto_slide_cmd(update, context):
+    if not context.args:
+        await update.message.reply_text("Uso: /goto 5")
+        return
+    await _send_control_command(
+        update, context, "goto", target_slide=int(context.args[0])
+    )
+
+async def download_cmd(update, context):
+    user = await require_linked_user(update, context)
+    if not user:
+        return
+    presentation_id = await resolve_presentation_id(update, context, user)
+    if not presentation_id:
+        return
+    resp = requests.post(f"{BACKEND_API_URL}/api/presentations/{presentation_id}/convert")
+    pdf_url = resp.json()["pdf_url"]
+    await update.message.reply_document(
+        document=pdf_url.replace("/api", f"{BACKEND_API_URL}/api"),
+        filename="presentation.pdf"
+    )
+
+async def preview_next_cmd(update, context):
+    await _request_slide_image(update, context, offset=1)
+
+async def _send_control_command(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str, target_slide: int | None = None):
+    user = await require_linked_user(update, context)
+    user = await require_linked_user(update, context)
+    if not user:
+        return
+
+    presentation_id = await resolve_presentation_id(update, context, user)
+    if not presentation_id:
+        return
+    payload = {
+        "action": action,
+        "telegram_chat_id": update.effective_chat.id
+    }
+    if target_slide:
+        payload["target_slide"] = target_slide
+    resp = requests.post(
+        f"{BACKEND_API_URL}/api/presentations/{presentation_id}/control",
+        json=payload, timeout=5
+    )
+    if resp.ok:
+        slide = resp.json()["current_slide"]
+        await update.message.reply_text(f"Ahora en la diapositiva {slide}.")
+    else:
+        await update.message.reply_text("No pude actualizar la presentación.")
+
+async def end_presentation_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = await require_linked_user(update, context)
+    if not user:
+        return
+
+    presentation_id = await resolve_presentation_id(update, context, user)
+    if not presentation_id:
+        return
+
+    try:
+        resp = requests.post(
+            f"{BACKEND_API_URL}/api/presentations/{presentation_id}/end",
+            json={"telegram_chat_id": update.effective_chat.id},
+            timeout=5,
+        )
+        if resp.status_code == 200:
+            await update.message.reply_text("✅ Presentación finalizada.")
+        else:
+            await update.message.reply_text("No pude finalizar la presentación.")
+    except requests.RequestException:
+        await update.message.reply_text("Error al conectar con el backend.")
+
+async def _request_slide_image(update: Update, context: ContextTypes.DEFAULT_TYPE, offset: int):
+    user = await require_linked_user(update, context)
+    if not user:
+        return
+
+    presentation_id = await resolve_presentation_id(update, context, user)
+    try:
+        resp = requests.get(
+            f"{BACKEND_API_URL}/api/presentations/{presentation_id}/slides/next-image",
+            params={"offset": offset},
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            await update.message.reply_text("No pude obtener la siguiente diapositiva.")
+            return
+
+        image_bytes = resp.content
+        await update.message.reply_photo(image=image_bytes)
+    except requests.RequestException:
+        await update.message.reply_text("Error al conectar con el backend.")
+
+
+async def resolve_presentation_id(update, context, user):
+    """
+    Devuelve el ID de la presentación que se va a controlar.
+    Primero mira el JSON del backend, luego lo que hay en context.user_data.
+    """
+    presentation_id = user.get("active_presentation_id")
+    if presentation_id:
+        context.user_data["presentation_id"] = presentation_id
+        return presentation_id
+
+    # Fallback: usa el último id que guardamos
+    cached = context.user_data.get("presentation_id")
+    if cached:
+        return cached
+
+    await update.message.reply_text(
+        "No hay presentación activa asociada. Iníciala desde la web o con /start_presentation."
+    )
+    return None
+
+
 def main():
     """Start the bot"""
     if not TELEGRAM_TOKEN:
@@ -355,6 +504,13 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("link", link_start))
+    app.add_handler(CommandHandler("start_presentation", start_presentation_cmd))
+    app.add_handler(CommandHandler("end_presentation", end_presentation_cmd))
+    app.add_handler(CommandHandler("next", next_slide_cmd))
+    app.add_handler(CommandHandler("prev", prev_slide_cmd))
+    app.add_handler(CommandHandler("goto", goto_slide_cmd))
+    app.add_handler(CommandHandler("download", download_cmd))
+    app.add_handler(CommandHandler("preview", preview_next_cmd))
     
     # Add callback query handler for buttons
     app.add_handler(CallbackQueryHandler(button_callback))

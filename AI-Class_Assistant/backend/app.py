@@ -107,9 +107,13 @@ def check_telegram_link(chat_id):
     """Check if a Telegram chat_id is linked to a user"""
     try:
         user = db.get_user_by_telegram_chat_id(chat_id)
-        if user:
-            return jsonify(user), 200
-        return jsonify({"error": "Not linked"}), 404
+        if not user:
+            return jsonify({"error": "Not linked"}), 404
+
+        active_presentation = db.get_active_presentation_for_user(user["id"])
+        user["active_presentation_id"] = active_presentation
+
+        return jsonify(user), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -232,6 +236,54 @@ def end_presentation(presentation_id):
         return jsonify({"error": "Presentation not found"}), 404
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+
+@app.route("/api/presentations/<int:presentation_id>/control", methods=["POST"])
+def control_presentation(presentation_id):
+    """
+    Body esperado:
+    {
+      "action": "next" | "prev" | "goto",
+      "target_slide": int (solo para goto),
+      "telegram_chat_id": int
+    }
+    """
+    data = request.json or {}
+    action = data.get("action")
+    telegram_chat_id = data.get("telegram_chat_id")
+
+    if action not in {"next", "prev", "goto"} or telegram_chat_id is None:
+        return jsonify({"error": "Bad request"}), 400
+
+    presentation = db.get_presentation_by_id(presentation_id)
+    if not presentation:
+        return jsonify({"error": "Presentation not found"}), 404
+
+    owner_chat = presentation.get("presenter_chat_id")
+    if owner_chat is None or owner_chat != telegram_chat_id:
+        return jsonify({"error": "Presentation not accessible"}), 403
+
+    current_slide = presentation.get("current_slide", 1)
+    total_slides = presentation.get("slide_count", 1)
+
+    if action == "next":
+        new_slide = min(current_slide + 1, total_slides)
+    elif action == "prev":
+        new_slide = max(current_slide - 1, 1)
+    else:  # action == "goto"
+        target = data.get("target_slide")
+        if not isinstance(target, int) or not (1 <= target <= total_slides):
+            return jsonify({"error": "Invalid target slide"}), 400
+        new_slide = target
+
+    updated = db.update_current_slide(presentation_id, new_slide)
+
+    socketio.emit(
+        "presentation:update",
+        {"presentation_id": presentation_id, "current_slide": updated["current_slide"]},
+    )
+    return jsonify(updated), 200
+
 
 
 @app.route("/api/presentations/<int:presentation_id>/questions", methods=["POST"])
@@ -299,6 +351,7 @@ def convert_presentation_to_pdf(presentation_id):
         pdf_path = convert_pptx_to_pdf(pptx_path, output_dir)
         
         slide_count = get_slide_count(pptx_path)
+        db.update_slide_metadata(presentation_id, slide_count=slide_count)
 
         pdf_filename = os.path.basename(pdf_path)
         pdf_url = f"/api/presentations/{presentation_id}/pdf/{pdf_filename}"

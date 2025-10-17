@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 import "./Presentations.css";
+import socket from "../sockets/socket";
 import { 
   getPresentationInfo, 
   convertPresentationToPDF,
@@ -168,6 +169,23 @@ function Presentations({ user }) {
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, [pdfDoc, currentSlide, totalSlides]);
+
+    useEffect(() => {
+    if (!presentationId) return;
+
+    const handleUpdate = ({ presentation_id, current_slide }) => {
+      if (presentation_id === presentationId) {
+        setCurrentSlide(current_slide);
+      }
+    };
+
+    socket.on("presentation:update", handleUpdate);
+
+    return () => {
+      socket.off("presentation:update", handleUpdate);
+    };
+  }, [presentationId]);
+
 
   const handleStartPresentation = async () => {
     if (!presentationId) return;

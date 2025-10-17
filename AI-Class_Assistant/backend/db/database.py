@@ -263,19 +263,34 @@ def create_presentation(class_id, original_pptx_path=None):
 
 
 def get_presentation_by_id(presentation_id):
-    """Get presentation by ID"""
-    with get_db_cursor() as cursor:
+    """Get presentation by ID with owner info."""
+    with get_db_cursor(commit=False) as cursor:
         cursor.execute(
             """
-            SELECT id, class_id, original_pptx_path, ai_generated_slide_indices,
-                   duration_seconds, started_at, ended_at, created_at, updated_at
-            FROM presentations
-            WHERE id = %s
+            SELECT 
+                p.id,
+                p.current_slide,
+                p.slide_count,
+                p.class_id,
+                p.original_pptx_path,
+                p.ai_generated_slide_indices,
+                p.duration_seconds,
+                p.started_at,
+                p.ended_at,
+                p.created_at,
+                p.updated_at,
+                c.user_id AS owner_id,
+                u.telegram_chat_id AS presenter_chat_id
+            FROM presentations p
+            JOIN classes c ON c.id = p.class_id
+            LEFT JOIN users u ON u.id = c.user_id
+            WHERE p.id = %s
             """,
             (presentation_id,)
         )
-        result = cursor.fetchone()
-        return dict(result) if result else None
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
 
 
 def get_presentation_by_class_id(class_id):
@@ -374,3 +389,84 @@ def get_presentation_questions(presentation_id):
             (presentation_id,)
         )
         return [dict(row) for row in cursor.fetchall()]
+
+
+def get_active_presentation_for_user(user_id: int):
+    with get_db_cursor(commit=False) as cursor:
+        cursor.execute(
+            """
+            SELECT p.id
+            FROM presentations p
+            JOIN classes c ON c.id = p.class_id
+            WHERE c.user_id = %s
+              AND p.started_at IS NOT NULL
+              AND p.ended_at IS NULL
+            ORDER BY p.started_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        return row["id"] if row else None
+
+
+def get_presentation_owner(presentation_id):
+    with get_db_cursor(commit=False) as cursor:
+        cursor.execute(
+            """
+            SELECT c.user_id
+            FROM presentations p
+            JOIN classes c ON c.id = p.class_id
+            WHERE p.id = %s
+            """,
+            (presentation_id,),
+        )
+        row = cursor.fetchone()
+        return row["user_id"] if row else None
+
+# backend/db/database.py
+def update_current_slide(presentation_id: int, slide: int):
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE presentations
+            SET current_slide = %s,
+                updated_at = NOW()
+            WHERE id = %s
+            RETURNING id, current_slide, slide_count
+            """,
+            (slide, presentation_id),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def update_slide_metadata(presentation_id: int, *, current_slide: int | None = None,
+                          slide_count: int | None = None):
+    """Actualiza columnas opcionales de la presentación y devuelve los valores nuevos."""
+    fields = []
+    values = []
+
+    if current_slide is not None:
+        fields.append("current_slide = %s")
+        values.append(current_slide)
+
+    if slide_count is not None:
+        fields.append("slide_count = %s")
+        values.append(slide_count)
+
+    if not fields:
+        return None  # Nada que actualizar
+
+    query = f"""
+        UPDATE presentations
+        SET {', '.join(fields)}, updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, current_slide, slide_count
+    """
+    values.append(presentation_id)
+
+    with get_db_cursor() as cursor:
+        cursor.execute(query, tuple(values))
+        row = cursor.fetchone()
+        return dict(row) if row else None
