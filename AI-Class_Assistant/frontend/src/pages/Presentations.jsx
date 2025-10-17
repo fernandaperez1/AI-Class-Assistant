@@ -102,7 +102,7 @@ function Presentations({ user }) {
         const containerWidth = container.clientWidth;
         const containerHeight = container.clientHeight;
         
-        // Calculate scale to fit slide to screen (need to test in dif screens)
+        // Calculate scale to fit slide to screen (need to test in dif screens, caused issues in w10)
         const viewport = page.getViewport({ scale: 1 });
         const scaleX = containerWidth / viewport.width;
         const scaleY = containerHeight / viewport.height;
@@ -191,9 +191,13 @@ function Presentations({ user }) {
     if (!presentationId) return;
     
     try {
-      await startPresentation(presentationId);
+      // Pass telegram_chat_id if user has it linked (made this optional just in case so that the app wouldnt fall)
+      const telegramChatId = user?.telegram_chat_id || null;
+      console.log("Starting presentation with:", { presentationId, telegramChatId, user });
+      
+      await startPresentation(presentationId, telegramChatId);
       setPresentationStarted(true);
-      console.log("Presentation started");
+      console.log("Presentation started successfully");
       
       // fullscreen mode on the container
       const container = containerRef.current;
@@ -208,6 +212,7 @@ function Presentations({ user }) {
       }
     } catch (err) {
       console.error("Error starting presentation:", err);
+      alert("Failed to start presentation: " + err.message);
     }
   };
 
@@ -215,7 +220,8 @@ function Presentations({ user }) {
     if (!presentationId) return;
     
     try {
-      const result = await endPresentation(presentationId);
+      const telegramChatId = user?.telegram_chat_id || null;
+      const result = await endPresentation(presentationId, telegramChatId);
       setPresentationStarted(false);
       console.log("Presentation ended. Duration:", result.duration_seconds, "seconds");
       
@@ -242,7 +248,8 @@ function Presentations({ user }) {
         
         if (presentationStarted && presentationId) {
           try {
-            const result = await endPresentation(presentationId);
+            const telegramChatId = user?.telegram_chat_id || null;
+            const result = await endPresentation(presentationId, telegramChatId);
             setPresentationStarted(false);
             console.log("Presentation auto-ended. Duration:", result.duration_seconds, "seconds");
           } catch (err) {
