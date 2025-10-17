@@ -11,7 +11,7 @@ load_dotenv()
 app = Flask(__name__)
 
 # Enable CORS for all routes (just doing for debug, will delete ltr)
-# CORS(app, resources={r"/api/*": {"origins": "*"}})
+CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 PORT = int(os.getenv("PORT", 5000))
