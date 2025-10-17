@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import CreateClassModal from "../components/CreateClassModal";
+import { useNavigate } from "react-router-dom";
 import { API_URL } from "../config";
 import "./Home.css";
 
@@ -11,6 +12,8 @@ export default function HomePage({ user }) {
   const [isTelegramOpen, setIsTelegramOpen] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [classes, setClasses] = useState([]);
+
+  const navigate = useNavigate();
 
   const isTelegramLinked = user?.telegram_chat_id !== null;
 
@@ -235,7 +238,7 @@ export default function HomePage({ user }) {
           </button>
           <button
             className="start-button"
-            onClick={() => console.log("Start class", cls.id)}
+            onClick={() => navigate(`/class/${cls.id}/presentation`)}
           >
             Start
           </button>

@@ -4,6 +4,7 @@ import { subscribeToAuthChanges } from "./firebase";
 import { API_URL } from "./config";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Navbar from "./components/Navbar.jsx";
+import Presentations from "./pages/Presentations.jsx";
 
 import LoginPage from "./pages/Login";
 import HomePage from "./pages/Home";
@@ -65,6 +66,15 @@ export default function App() {
           element={
             <ProtectedRoute user={user}>
               <HomePage user={user} />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/class/:classId/presentation"
+          element={
+            <ProtectedRoute user={user}>
+              <Presentations user={user} />
             </ProtectedRoute>
           }
         />
