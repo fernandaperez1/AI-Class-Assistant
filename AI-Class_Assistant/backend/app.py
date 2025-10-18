@@ -235,10 +235,11 @@ def start_presentation(presentation_id):
         
         print(f"Starting presentation {presentation_id}")
         print(f"Request data: {data}")
-        print(f"Telegram chat ID: {telegram_chat_id}")
+        # print(f"Telegram chat ID: {telegram_chat_id}")
         
         result = db.start_presentation(presentation_id)
         if result:
+            db.update_current_slide(presentation_id, data.get("current_slide"))
             presentation = db.get_presentation_by_id(presentation_id)
             slide_count = presentation.get("slide_count", 0)
             current_slide = presentation.get("current_slide")

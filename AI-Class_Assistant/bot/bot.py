@@ -388,6 +388,18 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+
+
+
+
+
+#FIXING HEREEEEEEEE
+
+
+
+
+
+
 async def show_navigation_menu(query, presentation_id: int):
     """Show the main navigation menu"""
     try:

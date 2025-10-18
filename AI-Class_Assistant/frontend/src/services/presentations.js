@@ -33,10 +33,11 @@ export const getPresentationText = async (presentationId) => {
   return response.json();
 };
 
-export const startPresentation = async (presentationId, telegramChatId = null) => {
+export const startPresentation = async (presentationId, telegramChatId = null, currentSlide=1) => {
   const body = {};
   if (telegramChatId) {
     body.telegram_chat_id = telegramChatId;
+    body.current_slide = currentSlide;
   }
   
   const response = await fetch(

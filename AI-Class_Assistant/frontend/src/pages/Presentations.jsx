@@ -46,7 +46,8 @@ function Presentations({ user }) {
         setConverting(true);
         const convertData = await convertPresentationToPDF(infoData.presentation_id);
         setConverting(false);
-        
+        console.log(`current slide`)
+        console.log(currentSlide)        
         const fullPdfUrl = `${API_URL}${convertData.pdf_url}`;   
     
         console.log(`Successfully converted to PDF: ${fullPdfUrl}`);
@@ -195,7 +196,7 @@ function Presentations({ user }) {
       const telegramChatId = user?.telegram_chat_id || null;
       console.log("Starting presentation with:", { presentationId, telegramChatId, user });
       
-      await startPresentation(presentationId, telegramChatId);
+      await startPresentation(presentationId, telegramChatId, currentSlide);
       setPresentationStarted(true);
       console.log("Presentation started successfully");
       
