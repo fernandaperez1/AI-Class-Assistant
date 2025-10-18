@@ -241,6 +241,9 @@ def start_presentation(presentation_id):
         if result:
             presentation = db.get_presentation_by_id(presentation_id)
             slide_count = presentation.get("slide_count", 0)
+            current_slide = presentation.get("current_slide")
+            print("all the presentation info")
+            print(presentation)
             
             # Emit WebSocket event to notify bot (need to test with concurrent users)
             if telegram_chat_id:
@@ -249,7 +252,7 @@ def start_presentation(presentation_id):
                     "presentation_id": presentation_id,
                     "telegram_chat_id": telegram_chat_id,
                     "slide_count": slide_count,
-                    "current_slide": 1
+                    "current_slide": current_slide
                 })
             else:
                 print("No telegram_chat_id provided, skipping bot notification")
@@ -325,8 +328,13 @@ def control_presentation(presentation_id):
         new_slide = max(current_slide - 1, 1)
     else:
         target = data.get("target_slide")
-        if not isinstance(target, int) or not (1 <= target <= total_slides):
+        if not isinstance(target, int):
             return jsonify({"error": "Invalid target slide"}), 400
+        #handling invalid inputs, this is what seemed best for me tbh
+        elif (target <= 1):
+            target=1
+        elif (total_slides <= target):
+            target=total_slides
         new_slide = target
 
     updated = db.update_current_slide(presentation_id, new_slide)
