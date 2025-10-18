@@ -67,6 +67,10 @@ docker logs class_backend -f
 
 # View logs with timestamps
 docker logs class_backend -t
+
+# View backend files by entering its file system
+docker exec -it class_backend /bin/bash
+
 ```
 
 ### Bot Logs

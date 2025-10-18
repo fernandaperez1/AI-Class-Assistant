@@ -1,6 +1,3 @@
-"""
-Database connection and utility functions for Class Assistant Platform
-"""
 import os
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -147,6 +144,47 @@ def create_class(user_id, subject, difficulty_level, class_name=None):
             (user_id, class_name, subject, difficulty_level)
         )
         return dict(cursor.fetchone())
+    
+
+def delete_class(class_id, user_id):
+    """Delete a class and its associated PPTX file if it exists."""
+    try:
+        with get_db_cursor() as cursor:
+            # Get the associated pptx file path
+            cursor.execute(
+                """
+                SELECT p.original_pptx_path
+                FROM presentations p
+                JOIN classes c ON p.class_id = c.id
+                WHERE c.id = %s AND c.user_id = %s
+                """,
+                (class_id, user_id)
+            )
+            result = cursor.fetchone()
+            if result and result.get("original_pptx_path"):
+                pptx_path = result["original_pptx_path"]
+                if os.path.exists(pptx_path):
+                    try:
+                        os.remove(pptx_path)
+                        print(f"Deleted PPTX file: {pptx_path}")
+                    except Exception as e:
+                        print(f"Warning: Could not delete file {pptx_path}: {e}")
+
+            cursor.execute(
+                """
+                DELETE FROM classes
+                WHERE id = %s AND user_id = %s
+                RETURNING id, user_id
+                """,
+                (class_id, user_id)
+            )
+
+            result = cursor.fetchone()
+            return dict(result) if result else None
+
+    except Exception as e:
+        print("DB error:", e)
+        raise
 
 
 def get_class_by_id(class_id):
@@ -206,11 +244,6 @@ def update_class(class_id, **kwargs):
         return dict(result) if result else None
 
 
-def delete_class(class_id):
-    """Delete a class"""
-    with get_db_cursor() as cursor:
-        cursor.execute("DELETE FROM classes WHERE id = %s", (class_id,))
-        return cursor.rowcount > 0
 
 
 # Presentation operations
@@ -230,19 +263,34 @@ def create_presentation(class_id, original_pptx_path=None):
 
 
 def get_presentation_by_id(presentation_id):
-    """Get presentation by ID"""
-    with get_db_cursor() as cursor:
+    """Get presentation by ID with owner info."""
+    with get_db_cursor(commit=False) as cursor:
         cursor.execute(
             """
-            SELECT id, class_id, original_pptx_path, ai_generated_slide_indices,
-                   duration_seconds, started_at, ended_at, created_at, updated_at
-            FROM presentations
-            WHERE id = %s
+            SELECT 
+                p.id,
+                p.current_slide,
+                p.slide_count,
+                p.class_id,
+                p.original_pptx_path,
+                p.ai_generated_slide_indices,
+                p.duration_seconds,
+                p.started_at,
+                p.ended_at,
+                p.created_at,
+                p.updated_at,
+                c.user_id AS owner_id,
+                u.telegram_chat_id AS presenter_chat_id
+            FROM presentations p
+            JOIN classes c ON c.id = p.class_id
+            LEFT JOIN users u ON u.id = c.user_id
+            WHERE p.id = %s
             """,
             (presentation_id,)
         )
-        result = cursor.fetchone()
-        return dict(result) if result else None
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
 
 
 def get_presentation_by_class_id(class_id):
@@ -341,3 +389,83 @@ def get_presentation_questions(presentation_id):
             (presentation_id,)
         )
         return [dict(row) for row in cursor.fetchall()]
+
+
+def get_active_presentation_for_user(user_id: int):
+    with get_db_cursor(commit=False) as cursor:
+        cursor.execute(
+            """
+            SELECT p.id
+            FROM presentations p
+            JOIN classes c ON c.id = p.class_id
+            WHERE c.user_id = %s
+              AND p.started_at IS NOT NULL
+              AND p.ended_at IS NULL
+            ORDER BY p.started_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        )
+        row = cursor.fetchone()
+        return row["id"] if row else None
+
+
+def get_presentation_owner(presentation_id):
+    with get_db_cursor(commit=False) as cursor:
+        cursor.execute(
+            """
+            SELECT c.user_id
+            FROM presentations p
+            JOIN classes c ON c.id = p.class_id
+            WHERE p.id = %s
+            """,
+            (presentation_id,),
+        )
+        row = cursor.fetchone()
+        return row["user_id"] if row else None
+
+def update_current_slide(presentation_id: int, slide: int):
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE presentations
+            SET current_slide = %s,
+                updated_at = NOW()
+            WHERE id = %s
+            RETURNING id, current_slide, slide_count
+            """,
+            (slide, presentation_id),
+        )
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def update_slide_metadata(presentation_id: int, *, current_slide: int | None = None,
+                          slide_count: int | None = None):
+    """Updates the current slide and the slide count."""
+    fields = []
+    values = []
+
+    if current_slide is not None:
+        fields.append("current_slide = %s")
+        values.append(current_slide)
+
+    if slide_count is not None:
+        fields.append("slide_count = %s")
+        values.append(slide_count)
+
+    if not fields:
+        return None
+
+    query = f"""
+        UPDATE presentations
+        SET {', '.join(fields)}, updated_at = NOW()
+        WHERE id = %s
+        RETURNING id, current_slide, slide_count
+    """
+    values.append(presentation_id)
+
+    with get_db_cursor() as cursor:
+        cursor.execute(query, tuple(values))
+        row = cursor.fetchone()
+        return dict(row) if row else None

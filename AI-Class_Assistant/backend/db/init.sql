@@ -40,6 +40,8 @@ CREATE TABLE presentations (
     original_pptx_path VARCHAR(500),  -- Path to the original PowerPoint file
     ai_generated_slide_indices INTEGER[],  -- Array of slide indices that were AI-generated
     duration_seconds INTEGER,  -- Duration of the presentation in seconds
+    current_slide INTEGER NOT NULL DEFAULT 1,
+    slide_count INTEGER,
     started_at TIMESTAMP,
     ended_at TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

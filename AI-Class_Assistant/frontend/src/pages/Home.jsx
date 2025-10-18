@@ -1,4 +1,6 @@
 import React, { useState, useEffect } from "react";
+import CreateClassModal from "../components/CreateClassModal";
+import { useNavigate } from "react-router-dom";
 import { API_URL } from "../config";
 import "./Home.css";
 
@@ -7,28 +9,67 @@ export default function HomePage({ user }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [codeExpiry, setCodeExpiry] = useState(null);
+  const [isTelegramOpen, setIsTelegramOpen] = useState(false);
+  const [showModal, setShowModal] = useState(false);
+  const [classes, setClasses] = useState([]);
 
-  // Check if user already has Telegram linked
+  const navigate = useNavigate();
+
   const isTelegramLinked = user?.telegram_chat_id !== null;
+
+  const fetchClasses = async () => {
+    try {
+      const res = await fetch(`${API_URL}/api/users/${user.id}/classes`);
+      if (!res.ok) throw new Error("Failed to fetch classes");
+      const data = await res.json();
+      setClasses(data);
+    } catch (err) {
+      console.error(err);
+      setError("Failed to load classes");
+    }
+  };
+
+  useEffect(() => {
+    if (user?.id) fetchClasses();
+  }, [user]);
+
+  const handleDeleteClass = async (classId) => {
+    if (!window.confirm("Are you sure you want to delete this class?")) return;
+
+    try {
+      const response = await fetch(`${API_URL}/api/classes/${classId}/delete`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_id: user.id }),
+      });
+
+      if (!response.ok) throw new Error("Failed to delete class");
+
+      setClasses(classes.filter((c) => c.id !== classId));
+    } catch (err) {
+      console.error(err);
+      alert("Error deleting class. Please try again.");
+    }
+  };
 
   const generateLinkCode = async () => {
     setLoading(true);
     setError(null);
 
     try {
-      const response = await fetch(`${API_URL}/api/users/${user.id}/link-code`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
+      const response = await fetch(
+        `${API_URL}/api/users/${user.id}/link-code`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        }
+      );
 
-      if (!response.ok) {
-        throw new Error("Failed to generate link code");
-      }
+      if (!response.ok) throw new Error("Failed to generate link code");
 
       const data = await response.json();
       setLinkCode(data.telegram_link_code);
-      
-      // Set expiry time (15 minutes from now)
+
       const expiryTime = new Date();
       expiryTime.setMinutes(expiryTime.getMinutes() + 15);
       setCodeExpiry(expiryTime);
@@ -40,142 +81,180 @@ export default function HomePage({ user }) {
     }
   };
 
-  // Countdown timer for code expiry (it isnt working but shit looks good, check if you can fix it fer)
+  // Countdown timer (shit aint working xd, need to add a use effect)
   useEffect(() => {
     if (!codeExpiry) return;
-
     const interval = setInterval(() => {
       const now = new Date();
-      const timeLeft = codeExpiry - now;
-
-      if (timeLeft <= 0) {
+      if (now >= codeExpiry) {
         setLinkCode(null);
         setCodeExpiry(null);
         clearInterval(interval);
       }
     }, 1000);
-
     return () => clearInterval(interval);
   }, [codeExpiry]);
 
   const getTimeRemaining = () => {
     if (!codeExpiry) return "";
-    
     const now = new Date();
-    const timeLeft = Math.max(0, codeExpiry - now);
-    const minutes = Math.floor(timeLeft / 60000);
-    const seconds = Math.floor((timeLeft % 60000) / 1000);
-    
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    const diff = Math.max(0, codeExpiry - now);
+    const min = Math.floor(diff / 60000);
+    const sec = Math.floor((diff % 60000) / 1000);
+    return `${min}:${sec.toString().padStart(2, "0")}`;
+  };
+
+  const toggleTelegram = () => setIsTelegramOpen(!isTelegramOpen);
+
+  const handleClassCreated = (newClass) => {
+    setClasses([...classes, newClass]);
+    setShowModal(false);
   };
 
   return (
     <div className="home-page">
       <div className="home-container">
+        {/* Welcome */}
         <div className="welcome-section">
-          <h1>Welcome to Class Assistant! 🎓</h1>
+          <h1>Welcome to TutorFlow! 🎓</h1>
           <p className="subtitle">
-            Your AI-powered educational platform for interactive learning
+            Your AI-powered educational platform to assist you with your classes
           </p>
-          <div className="user-info">
-            <p>Logged in as: <strong>{user?.email}</strong></p>
-          </div>
         </div>
 
+        {/* Telegram Section(I wanna make it smalled in the future) */}
         <div className="telegram-section">
           <div className="section-card">
-            <div className="card-header">
+            <div
+              className="card-header collapsible-header"
+              onClick={toggleTelegram}
+            >
               <h2>📱 Link Your Telegram Account</h2>
+              <span className="collapse-arrow">
+                {isTelegramOpen ? "▲" : "▼"}
+              </span>
             </div>
-            <div className="card-body">
-              {isTelegramLinked ? (
-                <div className="success-message">
-                  <div className="success-icon">✓</div>
-                  <h3>Telegram Linked Successfully!</h3>
-                  <p>Your Telegram account is connected and ready to use.</p>
-                  <p className="info-text">
-                    You can now interact with the Class Assistant bot on Telegram
-                    to ask questions during presentations.
-                  </p>
-                </div>
-              ) : (
-                <>
-                  <p className="instruction-text">
-                    Link your Telegram account to interact with the Class Assistant bot
-                    during presentations. You'll be able to ask questions and receive
-                    AI-generated answers in real-time!
-                  </p>
 
-                  {!linkCode ? (
-                    <button
-                      className="generate-button"
-                      onClick={generateLinkCode}
-                      disabled={loading}
-                    >
-                      {loading ? "Generating..." : "Generate Link Code"}
-                    </button>
-                  ) : (
-                    <div className="link-code-section">
-                      <div className="code-display">
-                        <div className="code-label">Your Link Code:</div>
-                        <div className="code-value">{linkCode}</div>
-                        <div className="code-timer">
-                          Expires in: {getTimeRemaining()}
-                        </div>
-                      </div>
+            {isTelegramOpen && (
+              <div className="card-body">
+                {isTelegramLinked ? (
+                  <div className="success-message">
+                    <div className="success-icon">✓</div>
+                    <h3>Telegram Linked Successfully!</h3>
+                    <p>Your Telegram account is connected and ready to use.</p>
+                    <p className="info-text">
+                      You can now interact with the Class Assistant bot on
+                      Telegram to ask questions during presentations.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <p className="instruction-text">
+                      Link your Telegram account to interact with the bot during
+                      presentations.
+                    </p>
 
-                      <div className="instructions">
-                        <h4>How to link:</h4>
-                        <ol>
-                          <li>Open Telegram and search for <strong>@ClassAssistantBot</strong></li>
-                          <li>Start a chat with the bot</li>
-                          <li>Send the command: <code>/link {linkCode}</code></li>
-                          <li>Wait for confirmation</li>
-                        </ol>
-                      </div>
-
+                    {!linkCode ? (
                       <button
-                        className="regenerate-button"
+                        className="generate-button"
                         onClick={generateLinkCode}
                         disabled={loading}
                       >
-                        Generate New Code
+                        {loading ? "Generating..." : "Generate Link Code"}
                       </button>
-                    </div>
-                  )}
+                    ) : (
+                      <div className="link-code-section">
+                        <div className="code-display">
+                          <div className="code-label">Your Link Code:</div>
+                          <div className="code-value">{linkCode}</div>
+                          <div className="code-timer">
+                            Expires in: {getTimeRemaining()}
+                          </div>
+                        </div>
 
-                  {error && <div className="error-message">{error}</div>}
-                </>
-              )}
-            </div>
+                        <div className="instructions">
+                          <h4>How to link:</h4>
+                          <ol>
+                            <li>
+                              Open Telegram and search for{" "}
+                              <strong>@ClassAssistantBot</strong>
+                            </li>
+                            <li>Start a chat with the bot</li>
+                            <li>
+                              Send: <code>/link {linkCode}</code>
+                            </li>
+                          </ol>
+                        </div>
+
+                        <button
+                          className="regenerate-button"
+                          onClick={generateLinkCode}
+                          disabled={loading}
+                        >
+                          Generate New Code
+                        </button>
+                      </div>
+                    )}
+
+                    {error && <div className="error-message">{error}</div>}
+                  </>
+                )}
+              </div>
+            )}
           </div>
         </div>
+<div className="features-section">
+  <h2>Your Classes</h2>
 
-        <div className="features-section">
-          <h2>Coming Soon:</h2>
-          <div className="features-grid">
-            <div className="feature-card">
-              <div className="feature-icon">📚</div>
-              <h3>Create Classes</h3>
-              <p>Organize your learning materials by subject and difficulty level</p>
-            </div>
-            <div className="feature-card">
-              <div className="feature-icon">🎤</div>
-              <h3>Start Presentations</h3>
-              <p>Upload PowerPoint files and begin interactive sessions</p>
-            </div>
-            <div className="feature-card">
-              <div className="feature-icon">🤖</div>
-              <h3>AI Q&A</h3>
-              <p>Ask questions via Telegram and get instant AI-generated answers</p>
-            </div>
-            <div className="feature-card">
-              <div className="feature-icon">📊</div>
-              <h3>Track Progress</h3>
-              <p>View your presentation history and question analytics</p>
-            </div>
-          </div>
+  {/* Create Class Button */}
+  <div className="create-class-button-wrapper">
+    <button
+      className="generate-button"
+      onClick={() => setShowModal(true)}
+    >
+      + Create New Class
+    </button>
+  </div>
+
+  {/* Classes Grid */}
+  <div className="features-grid">
+    {classes.map((cls) => (
+      <div key={cls.id} className="feature-card">
+        <h3>{cls.class_name || "Untitled Class"}</h3>
+        <p>Subject: {cls.subject}</p>
+        <p>Difficulty: {cls.difficulty_level}</p>
+        <div className="class-buttons">
+          <button
+            className="info-button"
+            onClick={() => console.log("Info", cls.id)}
+          >
+            Info
+          </button>
+          <button
+            className="delete-button"
+            onClick={() => handleDeleteClass(cls.id)}
+          >
+            Delete
+          </button>
+          <button
+            className="start-button"
+            onClick={() => navigate(`/class/${cls.id}/presentation`)}
+          >
+            Start
+          </button>
         </div>
+      </div>
+    ))}
+  </div>
+</div>
+
+        {showModal && (
+          <CreateClassModal
+            userId={user.id}
+            onClose={() => setShowModal(false)}
+            onClassCreated={handleClassCreated}
+          />
+        )}
       </div>
     </div>
   );
