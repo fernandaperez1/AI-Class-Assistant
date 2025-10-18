@@ -1,8 +1,5 @@
 import { API_URL } from "../config";
 
-/**
- * Get presentation information for a class
- */
 export const getPresentationInfo = async (classId) => {
   const response = await fetch(
     `${API_URL}/api/classes/${classId}/presentation-info`
@@ -36,11 +33,20 @@ export const getPresentationText = async (presentationId) => {
   return response.json();
 };
 
-export const startPresentation = async (presentationId) => {
+export const startPresentation = async (presentationId, telegramChatId = null) => {
+  const body = {};
+  if (telegramChatId) {
+    body.telegram_chat_id = telegramChatId;
+  }
+  
   const response = await fetch(
     `${API_URL}/api/presentations/${presentationId}/start`,
     {
       method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
     }
   );
   if (!response.ok) {
@@ -49,11 +55,20 @@ export const startPresentation = async (presentationId) => {
   return response.json();
 };
 
-export const endPresentation = async (presentationId) => {
+export const endPresentation = async (presentationId, telegramChatId = null) => {
+  const body = {};
+  if (telegramChatId) {
+    body.telegram_chat_id = telegramChatId;
+  }
+  
   const response = await fetch(
     `${API_URL}/api/presentations/${presentationId}/end`,
     {
       method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
     }
   );
   if (!response.ok) {

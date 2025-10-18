@@ -1,10 +1,8 @@
-# Master Project Query — AI Context
-
 ## Project Name
-Class Assistant Platform
+TutorFlow
 
 ## Purpose
-A real-time educational assistant that helps students interact with their course material via a Telegram chatbot and a web frontend.
+A real-time educational assistant that helps teachers interact with their course material via a Telegram chatbot and a web frontend.
 
 ---
 
@@ -13,7 +11,7 @@ A real-time educational assistant that helps students interact with their course
 ### Frontend: React (TypeScript preferred)
 - Uses **Firebase Authentication** for secure login.  
 - Connects to the backend via **WebSockets** for real-time communication.  
-- Displays PowerPoint content as **images** converted from `.pptx` files.  
+- Displays PowerPoint content as **images** converted from `.pptx` files.  (changed this, its pdfs now)
 
 ### Backend: Flask (Python)
 - Handles WebSocket connections with both the **frontend** and **Telegram bot**.  
@@ -21,7 +19,7 @@ A real-time educational assistant that helps students interact with their course
 - Manages `.pptx` files using `python-pptx`:
   - Reads and edits slides based on user queries.
   - Adds new slides dynamically using **OpenAI or Gemini API**, which takes context from the class PowerPoint.  
-- Shows the pptx as an html in the frontend using Reveal.js, images included (extracted using python-pptx).  
+- Shows the pptx as an html in the frontend using Reveal.js, images included (extracted using python-pptx).  (changed this aswell to pdf)
 - Serves the pptx view to the frontend and only updates the new slides inserted.
 
 ### Chatbot: Telegram Bot (Python using `python-telegram-bot`)
@@ -59,7 +57,7 @@ A real-time educational assistant that helps students interact with their course
 ## Key Features
 
 - Real-time updates between bot, backend, and frontend.  
-- Contextual AI slide generation using OpenAI.  
+- Contextual AI slide generation.  
 - Secure user authentication with Firebase.  
-- Automatic PowerPoint to image conversion for browser visualization.  
+- Automatic PowerPoint to image conversion for browser visualization.  (changed this x3)
 - Persistent PostgreSQL storage for logs, users, and generated slides.  
