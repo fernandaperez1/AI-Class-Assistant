@@ -2,10 +2,12 @@ import React, { useState } from "react";
 import { signInWithGoogle } from "../firebase";
 import { API_URL } from "../config";
 import "./Login.css";
+import { useNavigate } from "react-router-dom";
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const navigate = useNavigate();
 
   const handleGoogleLogin = async () => {
     setLoading(true);
@@ -48,6 +50,8 @@ export default function LoginPage() {
         console.error("Backend error:", err);
         throw new Error("Could not connect to backend");
       }
+
+      navigate('/home', { replace: true });
 
       // User is now authenticated and stored in backend
       // The App.jsx will handle the navigation through auth state change
