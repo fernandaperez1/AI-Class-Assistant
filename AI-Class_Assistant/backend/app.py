@@ -6,6 +6,8 @@ from dotenv import load_dotenv
 from db import database as db
 from pptx_utils import extract_text_from_pptx, convert_pptx_to_pdf, get_slide_count, convert_pptx_to_images
 from ai_utils import generate_question_slide, generate_example_slide, read_presentation, add_slide
+import shutil
+from pptx import Presentation as PptxPresentation #only using it as fallback
 
 load_dotenv()
 
@@ -164,24 +166,77 @@ def create_class():
     
 @app.route("/api/classes/<int:class_id>/delete", methods=["DELETE"])
 def delete_class_endpoint(class_id):
-    """Delete a class"""
+    """Delete a class and all associated files"""
     try:
         data = request.json
         user_id = data.get("user_id")
         if not user_id:
             return jsonify({"error": "user_id is required"}), 400
 
+        print(f"[DELETE] Deleting class {class_id} and associated files")
+        
+        #get presentation info before deleting from database
+        presentation = db.get_presentation_by_class_id(class_id)
+        
+        if presentation:
+            presentation_id = presentation["id"]
+            original_path = presentation.get("original_pptx_path")
+            
+            print(f"[DELETE] Found presentation {presentation_id} for class {class_id}")
+            
+            #delete PPTX files (original and base)
+            if original_path and os.path.exists(original_path):
+                try:
+                    os.remove(original_path)
+                    print(f"[DELETE] Deleted PPTX: {original_path}")
+                except Exception as e:
+                    print(f"[DELETE] Error deleting PPTX: {e}")
+            
+            base_path = f"{original_path}_base" if original_path else None
+            if base_path and os.path.exists(base_path):
+                try:
+                    os.remove(base_path)
+                    print(f"[DELETE] Deleted base PPTX: {base_path}")
+                except Exception as e:
+                    print(f"[DELETE] Error deleting base PPTX: {e}")
+            
+            #delete slide images directory
+            image_dir = f"./slides/presentation_{presentation_id}_images"
+            if os.path.exists(image_dir):
+                try:
+                    shutil.rmtree(image_dir)
+                    print(f"[DELETE] Deleted images directory: {image_dir}")
+                except Exception as e:
+                    print(f"[DELETE] Error deleting images: {e}")
+            
+            #delete PDF files
+            try:
+                pdf_files = [f for f in os.listdir("./slides") 
+                           if f.startswith(f"presentation_{presentation_id}_") and f.endswith(".pdf")]
+                for pdf_file in pdf_files:
+                    pdf_path = os.path.join("./slides", pdf_file)
+                    os.remove(pdf_path)
+                    print(f"[DELETE] Deleted PDF: {pdf_path}")
+            except Exception as e:
+                print(f"[DELETE] Error deleting PDFs: {e}")
+        
+        #delete from database
         class_return = db.delete_class(class_id, user_id)
-        print("DEBUG")
-        print(class_return)
+        
         if class_return:
-            return jsonify(class_return), 200
+            print(f"[DELETE] Successfully deleted class {class_id} from database")
+            return jsonify({
+                **class_return,
+                "files_deleted": True,
+                "message": "Class and all associated files deleted successfully"
+            }), 200
         else:
             return jsonify({"error": "Class not found or not authorized"}), 404
 
     except Exception as e:
-        print("the exception is")
-        print(e)
+        print(f"[DELETE] Exception: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -219,8 +274,38 @@ def create_presentation(class_id):
         if not pptx_file:
             return jsonify({"error": "No file uploaded"}), 400
 
+        os.makedirs("./uploads", exist_ok=True)
+
         save_path = f"./uploads/class_{class_id}_{pptx_file.filename}"
+        base_save_path = f"./uploads/class_{class_id}_{pptx_file.filename}_base"
+        
+        #save the original file
         pptx_file.save(save_path)
+        print(f"[UPLOAD] Saved presentation to {save_path}")
+        
+        #validate the uploaded file (because idk why some files are getting corrupted)
+        file_size = os.path.getsize(save_path)
+        print(f"[UPLOAD] File size: {file_size} bytes")
+        
+        if file_size<1024:
+            os.remove(save_path)
+            return jsonify({"error": "Uploaded file is too small or corrupted"}), 400
+        
+        # Verify it's a valid PPTX
+        try:
+            from pptx import Presentation as PptxPresentation
+            test_prs = PptxPresentation(save_path)
+            slide_count = len(test_prs.slides)
+            print(f"[UPLOAD] Valid PPTX with {slide_count} slides")
+        except Exception as e:
+            print(f"[UPLOAD] Invalid PPTX file: {str(e)}")
+            os.remove(save_path)
+            return jsonify({"error": f"Invalid PPTX file: {str(e)}"}), 400
+        
+        # Create a backup copy for reset functionality
+        # Need to copy the file instead of saving twice, cz it was corrupting the files
+        shutil.copyfile(save_path, base_save_path)
+        print(f"[UPLOAD] Created backup at {base_save_path}")
 
         presentation = db.create_presentation(
             class_id=class_id,
@@ -230,6 +315,106 @@ def create_presentation(class_id):
         return jsonify(presentation), 201
     except Exception as e:
         print("Error uploading PPTX:", e)
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/classes/<int:class_id>/presentation/reset", methods=["POST"])
+def reset_presentation(class_id):
+    """Reset a presentation to its original state from the _base copy"""
+    try:
+        #get presentation info from DB
+        presentation = db.get_presentation_by_class_id(class_id)
+        if not presentation:
+            return jsonify({"error": "Presentation not found"}), 404
+
+        presentation_id = presentation["id"]
+        original_path = presentation["original_pptx_path"]
+        base_path = f"{original_path}_base"
+
+        #check if base file exists
+        if not os.path.exists(base_path):
+            return jsonify({"error": "_base file not found. Please re-upload the presentation."}), 404
+        
+        #check if its corrupted
+        base_size = os.path.getsize(base_path)
+        if base_size < 1024:
+            return jsonify({
+                "error": f"Base file is corrupted (size: {base_size} bytes). Please re-upload the presentation."
+            }), 400
+
+        print(f"[RESET] Resetting presentation {presentation_id} to original state")
+        print(f"[RESET] Original path: {original_path}")
+        print(f"[RESET] Base path: {base_path}")
+        print(f"[RESET] Base file exists: {os.path.exists(base_path)}")
+        print(f"[RESET] Original file exists: {os.path.exists(original_path)}")
+        
+        #overwrite the original PPTX with the _base copy
+        shutil.copyfile(base_path, original_path)
+        print(f"[RESET] Copied {base_path} to {original_path}")
+        print(f"[RESET] File size after copy: {os.path.getsize(original_path)} bytes")
+        if not os.path.exists(original_path):
+            raise Exception(f"Failed to copy file to {original_path}")
+        
+        #get the slide count from the reset PPTX
+        try:
+            reset_slide_count = get_slide_count(original_path)
+            print(f"[RESET] Reset presentation has {reset_slide_count} slides")
+        except Exception as e:
+            print(f"[RESET] Error getting slide count: {str(e)}")
+            print(f"[RESET] Trying to load with python-pptx directly...")
+            prs = PptxPresentation(original_path)
+            reset_slide_count = len(prs.slides)
+            print(f"[RESET] Direct load successful: {reset_slide_count} slides")
+        
+        #Update slide count in database
+        db.update_slide_metadata(presentation_id,slide_count=reset_slide_count)
+        
+        # Delete old slide images directory
+        image_dir = f"./slides/presentation_{presentation_id}_images"
+        if os.path.exists(image_dir):
+            shutil.rmtree(image_dir)
+            print(f"[RESET] Deleted old images from {image_dir}")
+        
+        # Delete old PDF if it exists
+        pdf_files = [f for f in os.listdir("./slides") if f.startswith(f"presentation_{presentation_id}_") and f.endswith(".pdf")]
+        for pdf_file in pdf_files:
+            pdf_path = os.path.join("./slides", pdf_file)
+            os.remove(pdf_path)
+            print(f"[RESET] Deleted old PDF: {pdf_path}")
+        
+        #regenerate images from the reset PPTX (so that the user does not have to wait again, but this has some issues if the user does not wait)
+        output_dir = "./slides"
+        result = convert_pptx_to_images(original_path, output_dir, presentation_id, force_regenerate=True)
+        print(f"[RESET] Regenerated {result['slide_count']} slide images")
+        
+        #socket event to notify frontend
+        import time
+        cache_bust_token = int(time.time() * 1000)
+        
+        socketio.emit(
+            "presentation:slides_updated",
+            {
+                "presentation_id": presentation_id,
+                "new_slide_count": reset_slide_count,
+                "cache_bust": cache_bust_token,
+                "reset": True
+            }
+        )
+        print(f"[RESET] Emitted slides_updated event with {reset_slide_count} slides")
+        
+        # Get updated presentation data
+        updated_presentation = db.get_presentation_by_id(presentation_id)
+
+        return jsonify({
+            "message": "Presentation reset successfully",
+            "presentation": updated_presentation,
+            "slide_count": reset_slide_count
+        }), 200
+
+    except Exception as e:
+        print("Error resetting PPTX:", e)
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -565,6 +750,37 @@ def get_presentation_info(class_id):
         }), 200
     except Exception as e:
         print(f"Error getting presentation info: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/classes/<int:class_id>/presentation/download", methods=["GET"])
+def download_presentation(class_id):
+    try:
+        presentation=db.get_presentation_by_class_id(class_id)
+        if not presentation:
+            return jsonify({"error": "No presentation found for this class"}), 404
+        
+        pptx_path = presentation.get("original_pptx_path")
+        if not pptx_path or not os.path.exists(pptx_path):
+            return jsonify({"error": "PPTX file not found"}), 404
+        
+        #extract filename from path
+        filename = os.path.basename(pptx_path)
+        if filename.startswith(f"class_{class_id}_"):
+            filename=filename[len(f"class_{class_id}_"):]
+        
+        print(f"[DOWNLOAD] Serving PPTX: {pptx_path} as {filename}")
+        
+        return send_file(
+            pptx_path,
+            mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        print(f"Error downloading presentation: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 

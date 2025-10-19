@@ -220,15 +220,17 @@ def get_class_by_id(class_id):
 
 
 def get_user_classes(user_id):
-    """Get all classes for a user"""
+    """Get all classes for a user with presentation info"""
     with get_db_cursor() as cursor:
         cursor.execute(
             """
-            SELECT id, user_id, class_name, subject, difficulty_level,
-                   created_at, updated_at
-            FROM classes
-            WHERE user_id = %s
-            ORDER BY created_at DESC
+            SELECT c.id, c.user_id, c.class_name, c.subject, c.difficulty_level,
+                   c.created_at, c.updated_at,
+                   p.id as presentation_id, p.slide_count, p.original_pptx_path
+            FROM classes c
+            LEFT JOIN presentations p ON c.id = p.class_id
+            WHERE c.user_id = %s
+            ORDER BY c.created_at DESC
             """,
             (user_id,)
         )

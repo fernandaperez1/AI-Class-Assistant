@@ -52,6 +52,71 @@ export default function HomePage({ user }) {
     }
   };
 
+  const handleDownloadPresentation = async (classId) => {
+    try {
+      const response = await fetch(`${API_URL}/api/classes/${classId}/presentation/download`);
+      
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to download presentation");
+      }
+
+      //this should be able to get the filename from the Content-Disposition header, otherwise I use a default
+      const contentDisposition = response.headers.get('Content-Disposition');
+      let filename = 'presentation.pptx';
+      if (contentDisposition) {
+        const filenameMatch = contentDisposition.match(/filename="?(.+)"?/);
+        if (filenameMatch) {
+          filename = filenameMatch[1];
+        }
+      }
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      
+      //cleanup
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error(err);
+      alert(`Error downloading presentation: ${err.message}`);
+    }
+  };
+
+  const handleResetPresentation = async (classId) => {
+    if (!window.confirm("Are you sure you want to reset this presentation to its original state? All AI-generated slides will be removed.")) return;
+
+    try {
+      setLoading(true);
+      const response = await fetch(`${API_URL}/api/classes/${classId}/presentation/reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to reset presentation");
+      }
+      const data = await response.json();
+      //update the class in the list with new slide count (need to also update the presentation info, resetting the AI responses)
+      setClasses(classes.map(c => 
+        c.id === classId 
+          ? { ...c, slide_count: data.slide_count }
+          : c
+      ));
+      alert("Presentation reset successfully!");
+    } catch (err) {
+      console.error(err);
+      alert(`Error resetting presentation: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const generateLinkCode = async () => {
     setLoading(true);
     setError(null);
@@ -223,6 +288,9 @@ export default function HomePage({ user }) {
         <h3>{cls.class_name || "Untitled Class"}</h3>
         <p>Subject: {cls.subject}</p>
         <p>Difficulty: {cls.difficulty_level}</p>
+        {cls.presentation_id && cls.slide_count && (
+          <p className="slide-info">Slides: {cls.slide_count}</p>
+        )}
         <div className="class-buttons">
           <button
             className="info-button"
@@ -230,6 +298,24 @@ export default function HomePage({ user }) {
           >
             Info
           </button>
+          {cls.presentation_id && (
+            <>
+              <button
+                className="download-button"
+                onClick={() => handleDownloadPresentation(cls.id)}
+                title="Download PPTX file"
+              >
+                Download
+              </button>
+              <button
+                className="reset-button"
+                onClick={() => handleResetPresentation(cls.id)}
+                title="Reset presentation to original"
+              >
+                Reset
+              </button>
+            </>
+          )}
           <button
             className="delete-button"
             onClick={() => handleDeleteClass(cls.id)}
