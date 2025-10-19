@@ -1,35 +1,29 @@
 import React, { useEffect, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
-import * as pdfjsLib from "pdfjs-dist";
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.js?url";
 import "./Presentations.css";
 import socket from "../sockets/socket";
 import { 
   getPresentationInfo, 
-  convertPresentationToPDF,
+  convertPresentationToImages,
+  getSlideImageUrl,
   startPresentation,
   endPresentation 
 } from "../services/presentations";
-import { API_URL } from "../config";
-
-pdfjsLib.GlobalWorkerOptions.workerSrc = workerUrl;
 
 function Presentations({ user }) {
   const { classId } = useParams();
-  const [pdfUrl, setPdfUrl] = useState(null);
   const [loading, setLoading] = useState(true);
   const [converting, setConverting] = useState(false);
   const [error, setError] = useState(null);
   const [presentationId, setPresentationId] = useState(null);
   const [presentationStarted, setPresentationStarted] = useState(false);
   
-  const [pdfDoc, setPdfDoc] = useState(null);
-  const [currentSlide, setCurrentSlide] = useState(1); //var to use to manage slide pos, we need to use it with the telegram bot
+  const [currentSlide, setCurrentSlide] = useState(1);
   const [totalSlides, setTotalSlides] = useState(0);
-  const [pageRendering, setPageRendering] = useState(false);
+  const [imageVersion, setImageVersion] = useState(0); // forcing the pres to reload in place
   
-  const canvasRef = useRef(null);
   const containerRef = useRef(null);
+  const imageRef = useRef(null);
 
   useEffect(() => {
     const fetchAndConvertPresentation = async () => {
@@ -38,20 +32,16 @@ function Presentations({ user }) {
         setError(null);
 
         console.log(`Fetching presentation info for class ${classId}...`);
-        console.log("test")
         const infoData = await getPresentationInfo(classId);
         setPresentationId(infoData.presentation_id);
 
-        console.log(`Converting presentation ${infoData.presentation_id} to PDF...`);
+        console.log(`Converting presentation ${infoData.presentation_id} to images...`);
         setConverting(true);
-        const convertData = await convertPresentationToPDF(infoData.presentation_id);
+        const convertData = await convertPresentationToImages(infoData.presentation_id);
         setConverting(false);
-        console.log(`current slide`)
-        console.log(currentSlide)        
-        const fullPdfUrl = `${API_URL}${convertData.pdf_url}`;   
-    
-        console.log(`Successfully converted to PDF: ${fullPdfUrl}`);
-        setPdfUrl(fullPdfUrl); 
+        
+        setTotalSlides(convertData.slide_count);
+        console.log(`Successfully converted to ${convertData.slide_count} slide images`);
       } catch (err) {
         console.error("Error loading presentation:", err);
         setError(err.message || "Could not load presentation."); 
@@ -66,77 +56,10 @@ function Presentations({ user }) {
     }
   }, [classId]);
 
-  useEffect(() => {
-    if (!pdfUrl) return;
-
-    const loadPdf = async () => {
-      try {
-        console.log("Loading PDF from:", pdfUrl);
-        const loadingTask = pdfjsLib.getDocument({
-          url: pdfUrl,
-        });
-        const pdf = await loadingTask.promise;
-        setPdfDoc(pdf);
-        setTotalSlides(pdf.numPages);
-        console.log(`PDF loaded successfully: ${pdf.numPages} pages`);
-      } catch (err) {
-        console.error("Error loading PDF:", err);
-        setError(`Failed to load PDF: ${err.message}`);
-      }
-    };
-
-    loadPdf();
-  }, [pdfUrl]);
-
-  useEffect(() => {
-    if (!pdfDoc || !canvasRef.current || !containerRef.current) return;
-
-    const renderPage = async () => {
-      setPageRendering(true);
-      
-      try {
-        const page = await pdfDoc.getPage(currentSlide);
-        const canvas = canvasRef.current;
-        const context = canvas.getContext('2d');
-        
-        const container = containerRef.current;
-        const containerWidth = container.clientWidth;
-        const containerHeight = container.clientHeight;
-        
-        // Calculate scale to fit slide to screen (need to test in dif screens, caused issues in w10)
-        const viewport = page.getViewport({ scale: 1 });
-        const scaleX = containerWidth / viewport.width;
-        const scaleY = containerHeight / viewport.height;
-        const scale = Math.min(scaleX, scaleY) * 0.95; 
-        
-        const scaledViewport = page.getViewport({ scale });
-        
-        // Set canvas dimensions
-        canvas.width = scaledViewport.width;
-        canvas.height = scaledViewport.height;
-        
-        // Render PDF page into canvas context
-        const renderContext = {
-          canvasContext: context,
-          viewport: scaledViewport
-        };
-        
-        await page.render(renderContext).promise;
-        setPageRendering(false);
-        console.log(`Rendered slide ${currentSlide}/${totalSlides}`);
-      } catch (err) {
-        console.error("Error rendering page:", err);
-        setPageRendering(false);
-      }
-    };
-
-    renderPage();
-  }, [pdfDoc, currentSlide, totalSlides]);
-
-  // works as an ex for the thing we gotta add with the telegram bot
+  // Keyboard navigation
   useEffect(() => {
     const handleKeyPress = (e) => {
-      if (!pdfDoc) return;
+      if (!totalSlides) return;
 
       switch (e.key) {
         case 'ArrowRight':
@@ -169,30 +92,41 @@ function Presentations({ user }) {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [pdfDoc, currentSlide, totalSlides]);
+  }, [currentSlide, totalSlides]);
 
-    useEffect(() => {
+  // WebSocket slide updates
+  useEffect(() => {
     if (!presentationId) return;
 
     const handleUpdate = ({ presentation_id, current_slide }) => {
       if (presentation_id === presentationId) {
+        console.log(`WebSocket update: moving to slide ${current_slide}`);
         setCurrentSlide(current_slide);
       }
     };
 
+    const handleSlideAdded = ({ presentation_id, new_slide_count }) => {
+      if (presentation_id === presentationId) {
+        console.log(`Slides added! New count: ${new_slide_count}`);
+        setTotalSlides(new_slide_count);
+        //force reload current slide image
+        setImageVersion(prev => prev + 1);
+      }
+    };
+
     socket.on("presentation:update", handleUpdate);
+    socket.on("presentation:slides_updated", handleSlideAdded);
 
     return () => {
       socket.off("presentation:update", handleUpdate);
+      socket.off("presentation:slides_updated", handleSlideAdded);
     };
   }, [presentationId]);
-
 
   const handleStartPresentation = async () => {
     if (!presentationId) return;
     
     try {
-      // Pass telegram_chat_id if user has it linked (made this optional just in case so that the app wouldnt fall)
       const telegramChatId = user?.telegram_chat_id || null;
       console.log("Starting presentation with:", { presentationId, telegramChatId, user });
       
@@ -200,7 +134,7 @@ function Presentations({ user }) {
       setPresentationStarted(true);
       console.log("Presentation started successfully");
       
-      // fullscreen mode on the container
+      //enter fullscreen mode
       const container = containerRef.current;
       if (container) {
         if (container.requestFullscreen) {
@@ -226,7 +160,7 @@ function Presentations({ user }) {
       setPresentationStarted(false);
       console.log("Presentation ended. Duration:", result.duration_seconds, "seconds");
       
-      // Exit fullscreen mode auto (sometimes it breaks?)
+      //exit fullscreen mode
       if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
         if (document.exitFullscreen) {
           document.exitFullscreen();
@@ -269,7 +203,7 @@ function Presentations({ user }) {
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
       document.removeEventListener('msfullscreenchange', handleFullscreenChange);
     };
-  }, [presentationStarted, presentationId]);
+  }, [presentationStarted, presentationId, user]);
 
   const goToNextSlide = () => {
     if (currentSlide < totalSlides) {
@@ -283,11 +217,33 @@ function Presentations({ user }) {
     }
   };
 
+  // Preload adjacent slides for smooth navigation
+  useEffect(() => {
+    if (!presentationId || !totalSlides) return;
+
+    const preloadSlides = [];
+    
+    // Preload next slide (CHECK THIS LATER, IT MIGHT NOT ALLOW ADDING NEW SLIDES)
+    if (currentSlide < totalSlides) {
+      preloadSlides.push(currentSlide + 1);
+    }
+    
+    // Preload previous slide
+    if (currentSlide > 1) {
+      preloadSlides.push(currentSlide - 1);
+    }
+
+    preloadSlides.forEach(slideNum => {
+      const img = new Image();
+      img.src = getSlideImageUrl(presentationId, slideNum) + `?v=${imageVersion}`;
+    });
+  }, [currentSlide, presentationId, totalSlides, imageVersion]);
+
   if (loading || converting) {
     return (
       <div className="presentation-placeholder">
         {converting 
-          ? "Converting presentation to PDF... This may take a moment."
+          ? "Converting presentation to images... This may take a moment."
           : "Loading presentation..."
         }
       </div>
@@ -297,7 +253,7 @@ function Presentations({ user }) {
   if (error)
     return <div className="presentation-placeholder error">{error}</div>;
 
-  if (!pdfUrl)
+  if (!presentationId || totalSlides === 0)
     return (
       <div className="presentation-placeholder">
         <h2>No presentation available</h2>
@@ -325,29 +281,41 @@ function Presentations({ user }) {
       </div>
       
       <div className="pdf-viewer" ref={containerRef}>
-        <canvas ref={canvasRef} />
+        <img 
+          ref={imageRef}
+          src={getSlideImageUrl(presentationId, currentSlide) + `?v=${imageVersion}`}
+          alt={`Slide ${currentSlide}`}
+          style={{
+            width: '100%',
+            height: '100%',
+            objectFit: 'contain',
+            backgroundColor: '#000'
+          }}
+          onError={(e) => {
+            console.error(`Failed to load slide ${currentSlide}`);
+            e.target.src = ''; // Prevent infinite reload loops
+          }}
+        />
         
-        {pdfDoc && (
-          <div className="slide-navigation">
-            <button 
-              onClick={goToPrevSlide} 
-              disabled={currentSlide === 1}
-              className="nav-btn prev-btn"
-            >
-              ← Previous
-            </button>
-            <span className="slide-info">
-              {currentSlide} / {totalSlides}
-            </span>
-            <button 
-              onClick={goToNextSlide} 
-              disabled={currentSlide === totalSlides}
-              className="nav-btn next-btn"
-            >
-              Next →
-            </button>
-          </div>
-        )}
+        <div className="slide-navigation">
+          <button 
+            onClick={goToPrevSlide} 
+            disabled={currentSlide === 1}
+            className="nav-btn prev-btn"
+          >
+            ← Previous
+          </button>
+          <span className="slide-info">
+            {currentSlide} / {totalSlides}
+          </span>
+          <button 
+            onClick={goToNextSlide} 
+            disabled={currentSlide === totalSlides}
+            className="nav-btn next-btn"
+          >
+            Next →
+          </button>
+        </div>
       </div>
     </div>
   );

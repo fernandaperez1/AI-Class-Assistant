@@ -23,6 +23,23 @@ export const convertPresentationToPDF = async (presentationId) => {
   return response.json();
 };
 
+export const convertPresentationToImages = async (presentationId) => {
+  const response = await fetch(
+    `${API_URL}/api/presentations/${presentationId}/convert-to-images`,
+    {
+      method: "POST",
+    }
+  );
+  if (!response.ok) {
+    throw new Error("Failed to convert presentation to images");
+  }
+  return response.json();
+};
+
+export const getSlideImageUrl = (presentationId, slideNumber) => {
+  return `${API_URL}/api/presentations/${presentationId}/slides/${slideNumber}`;
+};
+
 export const getPresentationText = async (presentationId) => {
   const response = await fetch(
     `${API_URL}/api/presentations/${presentationId}/text`

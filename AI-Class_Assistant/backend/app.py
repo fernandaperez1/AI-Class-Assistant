@@ -4,7 +4,7 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
 from db import database as db
-from pptx_utils import extract_text_from_pptx, convert_pptx_to_pdf, get_slide_count
+from pptx_utils import extract_text_from_pptx, convert_pptx_to_pdf, get_slide_count, convert_pptx_to_images
 
 load_dotenv()
 
@@ -439,6 +439,71 @@ def serve_pdf(presentation_id, filename):
         return send_file(file_path, mimetype='application/pdf')
     except Exception as e:
         print(f"Error serving PDF: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/presentations/<int:presentation_id>/convert-to-images", methods=["POST"])
+def convert_presentation_to_images_endpoint(presentation_id):
+    """Convert PPTX to individual slide images and return image URLs"""
+    try:
+        presentation = db.get_presentation_by_id(presentation_id)
+        if not presentation:
+            return jsonify({"error": "Presentation not found"}), 404
+        
+        pptx_path = presentation.get("original_pptx_path")
+        if not pptx_path or not os.path.exists(pptx_path):
+            return jsonify({"error": "PPTX file not found"}), 404
+        
+        output_dir = "./slides"
+        result = convert_pptx_to_images(pptx_path, output_dir, presentation_id)
+        
+        # Update slide count in database
+        db.update_slide_metadata(presentation_id, slide_count=result["slide_count"])
+        
+        # Generate URLs for each slide image
+        image_urls = [
+            f"/api/presentations/{presentation_id}/slides/{i}"
+            for i in range(1, result["slide_count"] + 1)
+        ]
+        
+        # Emit WebSocket event to notify frontend of updated slides
+        socketio.emit(
+            "presentation:slides_updated",
+            {
+                "presentation_id": presentation_id,
+                "new_slide_count": result["slide_count"]
+            }
+        )
+        print(f"Emitted presentation:slides_updated event for presentation {presentation_id} with {result['slide_count']} slides")
+        
+        return jsonify({
+            "presentation_id": presentation_id,
+            "slide_count": result["slide_count"],
+            "image_urls": image_urls,
+            "image_dir": result["image_dir"]
+        }), 200
+    except Exception as e:
+        print(f"Error converting presentation to images: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/presentations/<int:presentation_id>/slides/<int:slide_number>", methods=["GET"])
+def serve_slide_image(presentation_id, slide_number):
+    """Serve individual slide image with caching headers"""
+    try:
+        # construct path to slide image
+        image_dir = f"./slides/presentation_{presentation_id}_images"
+        image_path = os.path.join(image_dir, f"slide-{slide_number}.png")
+        
+        if not os.path.exists(image_path):
+            return jsonify({"error": f"Slide {slide_number} image not found"}), 404
+        
+        # Send file with caching headers for better performance, might remove if I notice that my ram usage goes up by too much
+        response = send_file(image_path, mimetype='image/png')
+        response.headers['Cache-Control'] = 'public, max-age=3600'  # cache for 1 hour (in the user side ofc, I wont pay a cache xdd)
+        return response
+    except Exception as e:
+        print(f"Error serving slide image: {e}")
         return jsonify({"error": str(e)}), 500
 
 
