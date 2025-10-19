@@ -130,6 +130,22 @@ def link_telegram_account(link_code, telegram_chat_id):
         result = cursor.fetchone()
         return dict(result) if result else None
 
+def unlink_telegram_account(telegram_chat_id):
+    """unlink a Telegram account using the one-time code"""
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE users
+            SET SET telegram_chat_id = NULL,
+                telegram_link_code = NULL,
+                telegram_link_code_expires_at = NULL
+            WHERE telegram_chat_id = %s 
+            RETURNING id, firebase_uid, email, telegram_chat_id
+            """,
+            (telegram_chat_id,)
+        )
+        result = cursor.fetchone()
+        return dict(result) if result else None
 
 # Class operations
 def create_class(user_id, subject, difficulty_level, class_name=None):

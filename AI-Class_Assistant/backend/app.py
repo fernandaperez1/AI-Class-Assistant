@@ -105,6 +105,20 @@ def link_telegram():
         return jsonify({"error": "Invalid or expired code"}), 400
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+    
+@app.route("/api/telegram/unlink", methods=["POST"])
+def unlink_telegram():
+    """unlink Telegram account"""
+    try:
+        data = request.json
+        user = db.unlink_telegram_account(
+            telegram_chat_id=data["telegram_chat_id"]
+        )
+        if user:
+            return jsonify(user), 200
+        return jsonify({"error": "Access error or user not linked"}), 400
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/telegram/check/<int:chat_id>", methods=["GET"])
