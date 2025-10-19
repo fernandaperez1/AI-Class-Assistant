@@ -32,7 +32,7 @@ user_states = {}  # format: {chat_id: {"action": "create_example", "presentation
 # Here I add all of the messages and delete them when the user leaves the pptx (need to add the queries to the ai to the db tho)
 active_presentation_messages = {}  # Format: {chat_id: message_id}
 
-# Global bot application reference (will be set in main(), but I needed to use it everywhere, ik its bad practice xd)
+#global bot application reference (will be set in main(), but I needed to use it everywhere, ik its bad practice xd)
 bot_app = None
 
 sio = socketio.AsyncClient()
@@ -49,7 +49,7 @@ async def disconnect():
 async def connect_error(data):
     print("Socket connection failed:", data)
 
-# Listen for all messages from the backend, its to debug
+#listen for all messages from the backend, its to debug
 @sio.on("*")
 async def catch_all(event, data=None):
     print(f"Received event: {event}")
@@ -92,15 +92,29 @@ async def handle_presentation_update(data):
     print("Presentation updated:", data)
     # notify user of slide changes
 
-# Helper to connect at startup
+# Helper to connect at startup with retry logic
 async def connect_socket():
-    try:
-        await sio.connect(BACKEND_WS_URL, transports=["websocket"])
-        print(f"🔗 Connected to backend socket at {BACKEND_WS_URL}")
-        # Keep the connection alive
-        await sio.wait()
-    except Exception as e:
-        print("❌ Socket connection failed:", e)
+    max_retries = 10
+    retry_delay = 2  # Start with 2 seconds
+    
+    for attempt in range(max_retries):
+        try:
+            print(f"🔗 Attempting to connect to backend WebSocket (attempt {attempt + 1}/{max_retries})...")
+            await sio.connect(BACKEND_WS_URL, transports=["websocket"])
+            print(f"✅ Connected to backend socket at {BACKEND_WS_URL}")
+            # Keep the connection alive
+            await sio.wait()
+            break  # Exit if successful
+        except Exception as e:
+            print(f"❌ Socket connection failed (attempt {attempt + 1}/{max_retries}): {e}")
+            
+            if attempt < max_retries - 1:
+                print(f"⏳ Retrying in {retry_delay} seconds...")
+                await asyncio.sleep(retry_delay)
+                retry_delay = min(retry_delay * 1.5, 30)  # Exponential backoff, max 30s
+            else:
+                print("❌ Failed to connect to backend after all retries. Bot will work without WebSocket notifications.")
+                # Bot will still work for commands, just won't receive WebSocket events
 
 
 async def send_presentation_active_notification(telegram_chat_id, presentation_id: int, slide_count, current_slide):
@@ -365,16 +379,16 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await handle_nav_goto(query, context, presentation_id)
         return
     
-    # AI Assistant button: format is "ai:action:presentation_id"
+    #AI Assistant button: format "ai:action:presentation_id"
     if callback_data.startswith("ai:"):
         parts = callback_data.split(":")
         if len(parts) >= 3:
             action = parts[1]
             presentation_id = int(parts[2])
             
-            # Clear any user state when entering AI menu (handles cancel buttn)
+            #clear any user state when entering AI menu (handles cancel buttn)
             chat_id = query.message.chat_id
-            if chat_id in user_states:
+            if chat_id in user_states and action == "menu":
                 user_states.pop(chat_id, None)
             
             if action == "menu":
@@ -385,6 +399,26 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await handle_ai_create_quiz(query, presentation_id)
             elif action == "create_quiz_alt":
                 await handle_ai_create_quiz_alternatives(query, presentation_id)
+        return
+    
+    #selection button: format "select:option_index:presentation_id"
+    if callback_data.startswith("select:"):
+        parts = callback_data.split(":")
+        if len(parts) >= 3:
+            option_index = int(parts[1])  # 0, 1, or 2, need to add edge cases here
+            presentation_id = int(parts[2])
+            
+            await handle_option_selection(query, context, presentation_id, option_index)
+        return
+    
+    # skip button: format "skip:action_type:presentation_id"
+    if callback_data.startswith("skip:"):
+        parts = callback_data.split(":")
+        if len(parts) >= 3:
+            action_type = parts[1]  # "example", "quiz", "quiz_alt"
+            presentation_id = int(parts[2])
+            
+            await handle_skip_input(query, context, presentation_id, action_type)
         return
 
 
@@ -572,7 +606,7 @@ async def handle_nav_goto(query, context, presentation_id: int):
         "Example: `5`",
         parse_mode='Markdown'
     )
-    # Store presentation_id for when user sends the slide number
+    # store presentation_id for when user sends the slide number
     context.user_data['goto_presentation_id'] = presentation_id
     context.user_data['waiting_for_slide_number'] = True
 
@@ -610,8 +644,7 @@ async def handle_ai_menu(query, presentation_id: int):
 async def handle_ai_create_example(query, presentation_id: int):
     """Handle AI create example request - prompt user for input"""
     chat_id = query.message.chat_id
-    
-    # Get current slide
+    # get current slide
     try:
         resp = requests.get(
             f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
@@ -632,13 +665,16 @@ async def handle_ai_create_example(query, presentation_id: int):
     
     message = (
         f"*Create Example (Slide {current_slide})*\n\n"
-        "Please send me:\n"
-        "• A text message describing what kind of example you want\n"
-        "• OR a voice message with your request\n\n"
-        "I'll generate an example based on the presentation and your input."
+        "Please provide context for the example you want:\n\n"
+        "• Send a text message describing what you want\n"
+        "  Example: \"make an example about ECG calculation\"\n\n"
+        "• OR send a voice message with your request\n\n"
+        "• OR type `/skip` for no specific context\n\n"
+        "I'll generate 3 examples based on the presentation content."
     )
     
     keyboard = [
+        [InlineKeyboardButton("⏭️ Skip (No Context)", callback_data=f"skip:example:{presentation_id}")],
         [InlineKeyboardButton("❌ Cancel", callback_data=f"ai:menu:{presentation_id}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -651,121 +687,305 @@ async def handle_ai_create_example(query, presentation_id: int):
 
 
 async def handle_ai_create_quiz(query, presentation_id: int):
-    """Handle AI create quiz request"""
-    await query.edit_message_text(
-        "Generating quiz based on current slide...",
-        parse_mode='Markdown'
-    )
+    """Handle AI create quiz request - prompt user for optional input"""
+    chat_id = query.message.chat_id
     
+    # Get current slide
     try:
-        # Get current slide from presentation
         resp = requests.get(
             f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
             timeout=5
         )
-        
+        current_slide = 1
         if resp.ok:
             current_slide = resp.json().get("current_slide", 1)
-            
-            # Call backend AI endpoint
-            ai_resp = requests.post(
-                f"{BACKEND_API_URL}/api/ai/create-quiz",
-                json={
-                    "presentation_id": presentation_id,
-                    "slide_number": current_slide,
-                    "telegram_chat_id": query.message.chat_id
-                },
-                timeout=30  #MUST DO:   check the time it takes the AI to answer, might be a shit ton
-            )
-            
-            if ai_resp.ok:
-                result = ai_resp.json()
-                quiz = result.get("quiz", "No quiz generated.")
-                
-                message = (
-                    f"❓ *Quiz for Slide {current_slide}*\n\n"
-                    f"{quiz}"
-                )
-                
-                keyboard = [
-                    [InlineKeyboardButton("⬅️ Back to AI Menu", callback_data=f"ai:menu:{presentation_id}")]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                
-                await query.edit_message_text(
-                    message,
-                    parse_mode='Markdown',
-                    reply_markup=reply_markup
-                )
-            else:
-                await query.edit_message_text(
-                    "❌ Failed to generate quiz. Please try again.",
-                    parse_mode='Markdown'
-                )
-        else:
-            await query.edit_message_text("❌ Could not get presentation info.")
-    except Exception as e:
-        print(f"Error creating quiz: {e}")
-        await query.edit_message_text("❌ Error connecting to backend.")
+    except:
+        current_slide = 1
+    
+    # Set user state to wait for input
+    user_states[chat_id] = {
+        "action": "create_quiz",
+        "presentation_id": presentation_id,
+        "slide": current_slide
+    }
+    
+    message = (
+        f"*Create Quiz (Slide {current_slide})*\n\n"
+        "Would you like to provide specific context for the quiz?\n\n"
+        "• Send a text message with your requirements\n"
+        "  Example: _\"focus on the main concepts\"_\n\n"
+        "• OR type `/skip` to generate based on slide content only\n\n"
+        "I'll generate 3 open-ended quiz questions."
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("⏭️ Skip (No Context)", callback_data=f"skip:quiz:{presentation_id}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"ai:menu:{presentation_id}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        message,
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
 
 
 async def handle_ai_create_quiz_alternatives(query, presentation_id: int):
-    """Handle AI create quiz with alternatives (multiple choice) request"""
-    await query.edit_message_text(
-        "Generating multiple choice quiz based on current slide...",
-        parse_mode='Markdown'
-    )
+    """Handle AI create quiz with alternatives (multiple choice) request - prompt user for optional input"""
+    chat_id = query.message.chat_id
     
+    # Get current slide
     try:
-        # Get current slide from presentation
         resp = requests.get(
             f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
             timeout=5
         )
-        
+        current_slide = 1
         if resp.ok:
             current_slide = resp.json().get("current_slide", 1)
+    except:
+        current_slide = 1
+    
+    # Set user state to wait for input
+    user_states[chat_id] = {
+        "action": "create_quiz_alt",
+        "presentation_id": presentation_id,
+        "slide": current_slide
+    }
+    
+    message = (
+        f"*Create Multiple Choice Quiz (Slide {current_slide})*\n\n"
+        "Would you like to provide specific context for the quiz?\n\n"
+        "• Send a text message with your requirements\n"
+        "  Example: _\"make it challenging\"_\n\n"
+        "• OR type `/skip` to generate based on slide content only\n\n"
+        "I'll generate 3 multiple-choice quiz questions."
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("⏭️ Skip (No Context)", callback_data=f"skip:quiz_alt:{presentation_id}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"ai:menu:{presentation_id}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        message,
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+
+
+async def handle_skip_input(query, context, presentation_id: int, action_type: str):
+    """
+    Handle when user clicks 'Skip (No Context)' button
+    Generates AI content without user input
+    """
+    chat_id = query.message.chat_id
+    
+    # get user state to find current slide
+    state = user_states.get(chat_id, {})
+    current_slide = state.get("slide", 1)
+    
+    # loading message
+    await query.edit_message_text(
+        "Generating options...\n\n_This may take a few seconds_",
+        parse_mode='Markdown'
+    )
+    
+    try:
+        # determine which endpoint to call, like routing
+        if action_type == "example":
+            endpoint = "/api/ai/create-example"
+            slide_type = "example"
+            title_prefix = "Examples"
+        elif action_type == "quiz":
+            endpoint = "/api/ai/create-quiz"
+            slide_type = "quiz"
+            title_prefix = "Quiz Questions"
+        elif action_type == "quiz_alt":
+            endpoint = "/api/ai/create-quiz-alternatives"
+            slide_type = "quiz-alternatives"
+            title_prefix = "Multiple Choice Quiz"
+        else:
+            await query.edit_message_text("❌ Invalid action type.")
+            return
+        
+        # call backend AI endpoint with empty user_input
+        ai_resp = requests.post(
+            f"{BACKEND_API_URL}{endpoint}",
+            json={
+                "presentation_id": presentation_id,
+                "slide_number": current_slide,
+                "telegram_chat_id": chat_id,
+                "user_input": ""  #no context
+            },
+            timeout=60
+        )
+        
+        if ai_resp.ok:
+            result = ai_resp.json()
+            options = result.get("options", [])
             
-            # Call backend AI endpoint
-            ai_resp = requests.post(
-                f"{BACKEND_API_URL}/api/ai/create-quiz-alternatives",
-                json={
-                    "presentation_id": presentation_id,
-                    "slide_number": current_slide,
-                    "telegram_chat_id": query.message.chat_id
-                },
-                timeout=30  #SAME AS BEFORE XD
-            )
-            
-            if ai_resp.ok:
-                result = ai_resp.json()
-                quiz = result.get("quiz", "No quiz generated.")
-                
-                message = (
-                    f"*Alternatives Quiz for Slide {current_slide}*\n\n"
-                    f"{quiz}"
-                )
-                
-                keyboard = [
-                    [InlineKeyboardButton("⬅️ Back to AI Menu", callback_data=f"ai:menu:{presentation_id}")]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                
+            if len(options) < 3:
                 await query.edit_message_text(
-                    message,
-                    parse_mode='Markdown',
-                    reply_markup=reply_markup
-                )
-            else:
-                await query.edit_message_text(
-                    "Failed to generate quiz. Please try again.",
+                    "❌ AI returned fewer than 3 options. Please try again.",
                     parse_mode='Markdown'
                 )
+                return
+            
+            # show the 3 options as buttons
+            message = (
+                f"*{title_prefix} for Slide {current_slide}*\n\n"
+                "*Generated 3 options. Choose one to add to your presentation:*\n\n"
+                f"*Option 1:*\n{options[0][:300]}{'...' if len(options[0]) > 300 else ''}\n\n"
+                f"*Option 2:*\n{options[1][:300]}{'...' if len(options[1]) > 300 else ''}\n\n"
+                f"*Option 3:*\n{options[2][:300]}{'...' if len(options[2]) > 300 else ''}\n\n"
+            )
+            
+            # update user state with options
+            user_states[chat_id] = {
+                "action": f"select_{action_type}",
+                "presentation_id": presentation_id,
+                "slide": current_slide,
+                "options": options,
+                "slide_type": slide_type,
+                "user_input": ""
+            }
+            
+            keyboard = [
+                [InlineKeyboardButton("✅ Choose Option 1",callback_data=f"select:0:{presentation_id}")],
+                [InlineKeyboardButton("✅ Choose Option 2",callback_data=f"select:1:{presentation_id}")],
+                [InlineKeyboardButton("✅ Choose Option 3",callback_data=f"select:2:{presentation_id}")],
+                [InlineKeyboardButton("🔄 Generate New Options",callback_data=f"skip:{action_type}:{presentation_id}")],
+                [InlineKeyboardButton("❌ Cancel", callback_data=f"ai:menu:{presentation_id}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                message,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
         else:
-            await query.edit_message_text("Could not get presentation info.")
+            await query.edit_message_text(
+                "❌ Failed to generate options. Please try again.",
+                parse_mode='Markdown'
+            )
     except Exception as e:
-        print(f"Error creating quiz with alternatives: {e}")
-        await query.edit_message_text("Ooops, Error connecting to backend.")
+        print(f"Error in handle_skip_input: {e}")
+        import traceback
+        traceback.print_exc()
+        await query.edit_message_text(
+            "❌ Error connecting to backend.",
+            parse_mode='Markdown'
+        )
+
+
+async def handle_option_selection(query, context, presentation_id: int, option_index: int):
+    """
+    Handle when user selects one of the 3 AI-generated options
+    Calls the insert-slide endpoint to add the slide to the presentation
+    """
+    chat_id = query.message.chat_id
+    
+    #get user state
+    if chat_id not in user_states:
+        await query.edit_message_text("❌ Session expired. Please try again.")
+        return
+    
+    state = user_states[chat_id]
+    options = state.get("options", [])
+    slide_type = state.get("slide_type", "example")
+    user_input = state.get("user_input", "")
+    insert_after = state.get("slide", 1)
+    
+    if option_index >= len(options):
+        await query.edit_message_text("❌ Invalid option selected.")
+        return
+    
+    selected_content = options[option_index]
+    
+    #loading message
+    await query.edit_message_text(
+        f"✅ *Option {option_index + 1} selected!*\n\n"
+        "🔄 Inserting slide into presentation...\n\n"
+        "_This may take a few seconds_",
+        parse_mode='Markdown'
+    )
+    
+    try:
+        # put the slide title
+        if slide_type == "example":
+            slide_title = "AI Example"
+        elif slide_type == "quiz":
+            slide_title = "AI Quiz ❓"
+        elif slide_type == "quiz-alternatives":
+            slide_title = "AI Quiz ❓"
+        else:
+            slide_title = "AI Generated Slide"
+        
+        # Call backend to insert the slide
+        insert_resp = requests.post(
+            f"{BACKEND_API_URL}/api/ai/insert-slide",
+            json={
+                "presentation_id": presentation_id,
+                "slide_content": selected_content,
+                "slide_title": slide_title,
+                "slide_type": slide_type,
+                "insert_after": insert_after,
+                "user_input": user_input,
+                "telegram_chat_id": chat_id
+            },
+            timeout=90  # need to test this, to see if its slower than the timeout
+        )
+        
+        if insert_resp.ok:
+            result = insert_resp.json()
+            new_slide_count = result.get("new_slide_count", 0)
+            inserted_at = result.get("inserted_at", insert_after + 1)
+            
+            message = (
+                "✅ *Slide Added Successfully!*\n\n"
+                f"📍 Inserted at position: *{inserted_at}*\n"
+                f"Total slides: *{new_slide_count}*\n\n"
+                "_The presentation has been updated. "
+                "If you're viewing it in fullscreen, the new slide is now available!_"
+            )
+            
+            keyboard = [
+                [InlineKeyboardButton("⬅️ Back to Navigation", callback_data=f"back_to_nav:{presentation_id}")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                message,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+            
+            #clear user state
+            user_states.pop(chat_id, None)
+        else:
+            error_data = insert_resp.json() if insert_resp.content else {}
+            error_msg = error_data.get("error", "Unknown error")
+            
+            await query.edit_message_text(
+                f"❌ *Failed to insert slide*\n\n"
+                f"Error: {error_msg}\n\n"
+                "Please try again or contact support.",
+                parse_mode='Markdown'
+            )
+    except Exception as e:
+        print(f"Error inserting slide: {e}")
+        import traceback
+        traceback.print_exc()
+        
+        await query.edit_message_text(
+            "❌ *Error connecting to backend*\n\n"
+            "Could not insert the slide. Please try again.",
+            parse_mode='Markdown'
+        )
 
 
 async def link_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -910,7 +1130,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         slide = state.get("slide")
         
         if action == "create_example":
-            # Handle text or voice input for example creation
+            # handle text or voice input for example creation
             user_input = None
             input_type = "text"
             
@@ -918,16 +1138,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 user_input = update.message.text
                 input_type = "text"
             elif update.message.voice:
-                # Handle voice message
+                # Handle voice message (still havent implemented it tho, should convert the audio to text here and pass it to the backend as text)
                 input_type = "audio"
-                # Get file_id to pass to backend
+                # get file_id to pass to backend
                 user_input = update.message.voice.file_id
             
             if user_input:
-                await update.message.reply_text("Generating example...")
-                
+                await update.message.reply_text("Generating examples...\n\n_This may take a few seconds_")
                 try:
-                    # Call backend AI endpoint
+                    # call backend AI endpoint (returns 3 options for everything, left it in the query)
                     payload = {
                         "presentation_id": presentation_id,
                         "slide_number": slide,
@@ -936,10 +1155,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "input_type": input_type
                     }
                     
-                    # If audio, download file and send file path or content
+                    # If audio, include voice file_id
                     if input_type == "audio":
-                        # For now, just send file_id - backend can download via Telegram API
-                        # Or we could download here and send transcription (will try this option tbh)
                         payload["voice_file_id"] = user_input
                     
                     ai_resp = requests.post(
@@ -950,15 +1167,40 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
                     if ai_resp.ok:
                         result = ai_resp.json()
-                        example = result.get("example", "No example generated.")
+                        options = result.get("options", [])
                         
+                        if len(options) < 3:
+                            await update.message.reply_text(
+                                "❌ AI returned fewer than 3 options. Please try again."
+                            )
+                            user_states.pop(chat_id, None)
+                            return
+                        
+                        # Show the 3 options as buttons
                         message = (
-                            f"*Example for Slide {slide}*\n\n"
-                            f"{example}"
+                            f"*Examples for Slide {slide}*\n\n"
+                            "*Generated 3 options. Choose one to add to your presentation:*\n\n"
+                            f"*Option 1:*\n{options[0][:300]}{'...' if len(options[0]) > 300 else ''}\n\n"
+                            f"*Option 2:*\n{options[1][:300]}{'...' if len(options[1]) > 300 else ''}\n\n"
+                            f"*Option 3:*\n{options[2][:300]}{'...' if len(options[2]) > 300 else ''}\n\n"
                         )
                         
+                        # Update user state with options
+                        user_states[chat_id] = {
+                            "action": "select_example",
+                            "presentation_id": presentation_id,
+                            "slide": slide,
+                            "options": options,
+                            "slide_type": "example",
+                            "user_input": user_input if input_type == "text" else "voice message"
+                        }
+                        
                         keyboard = [
-                            [InlineKeyboardButton("⬅️ Back to Navigation", callback_data=f"back_to_nav:{presentation_id}")]
+                            [InlineKeyboardButton("✅ Choose Option 1", callback_data=f"select:0:{presentation_id}")],
+                            [InlineKeyboardButton("✅ Choose Option 2", callback_data=f"select:1:{presentation_id}")],
+                            [InlineKeyboardButton("✅ Choose Option 3", callback_data=f"select:2:{presentation_id}")],
+                            [InlineKeyboardButton("🔄 Generate New Options", callback_data=f"ai:create_example:{presentation_id}")],
+                            [InlineKeyboardButton("❌ Cancel", callback_data=f"ai:menu:{presentation_id}")]
                         ]
                         reply_markup = InlineKeyboardMarkup(keyboard)
                         
@@ -968,14 +1210,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             reply_markup=reply_markup
                         )
                     else:
-                        await update.message.reply_text("Failed to generate example. Please try again.")
+                        await update.message.reply_text("❌ Failed to generate examples. Please try again.")
+                        user_states.pop(chat_id, None)
                         pres_resp = requests.get(f"{BACKEND_API_URL}/api/presentations/{presentation_id}", timeout=5)
                         if pres_resp.ok:
                             pres_data = pres_resp.json()
                             await show_controls(chat_id, presentation_id, pres_data.get("current_slide", 1), pres_data.get("slide_count", 0), context)
                 except Exception as e:
                     print(f"Error creating example: {e}")
-                    await update.message.reply_text("Error connecting to backend.")
+                    import traceback
+                    traceback.print_exc()
+                    await update.message.reply_text("❌ Error connecting to backend.")
+                    user_states.pop(chat_id, None)
                     try:
                         pres_resp = requests.get(f"{BACKEND_API_URL}/api/presentations/{presentation_id}", timeout=5)
                         if pres_resp.ok:
@@ -984,11 +1230,100 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except:
                         pass
                 
-                # Clear user state (so that he can ask again)
-                user_states.pop(chat_id, None)
+                # Don't clear user state yet - they need to select an option
                 return
             else:
                 await update.message.reply_text("Please send a text or voice message.")
+                return
+        
+        elif action in ["create_quiz", "create_quiz_alt"]:
+            # Handle text input for quiz creation
+            user_input = update.message.text if update.message.text else None
+            
+            if user_input:
+                await update.message.reply_text("Generating quiz questions...\n\n_This may take a few seconds_")
+                
+                try:
+                    # Determine endpoint and slide type
+                    if action == "create_quiz":
+                        endpoint = "/api/ai/create-quiz"
+                        slide_type = "quiz"
+                        title_prefix = "Quiz Questions"
+                    else:  # create_quiz_alt
+                        endpoint = "/api/ai/create-quiz-alternatives"
+                        slide_type = "quiz-alternatives"
+                        title_prefix = "Multiple Choice Quiz"
+                    
+                    # Call backend AI endpoint
+                    ai_resp = requests.post(
+                        f"{BACKEND_API_URL}{endpoint}",
+                        json={
+                            "presentation_id": presentation_id,
+                            "slide_number": slide,
+                            "telegram_chat_id": chat_id,
+                            "user_input": user_input
+                        },
+                        timeout=60
+                    )
+                    
+                    if ai_resp.ok:
+                        result = ai_resp.json()
+                        options = result.get("options", [])
+                        
+                        if len(options) < 3:
+                            await update.message.reply_text(
+                                "❌ AI returned fewer than 3 options. Please try again."
+                            )
+                            user_states.pop(chat_id, None)
+                            return
+                        
+                        # Show the 3 options as buttons
+                        message = (
+                            f"*{title_prefix} for Slide {slide}*\n\n"
+                            "*Generated 3 options. Choose one to add to your presentation:*\n\n"
+                            f"*Option 1:*\n{options[0][:300]}{'...' if len(options[0]) > 300 else ''}\n\n"
+                            f"*Option 2:*\n{options[1][:300]}{'...' if len(options[1]) > 300 else ''}\n\n"
+                            f"*Option 3:*\n{options[2][:300]}{'...' if len(options[2]) > 300 else ''}\n\n"
+                        )
+                        
+                        # Update user state with options
+                        user_states[chat_id] = {
+                            "action": f"select_{action.split('_')[1]}{'_alt' if action == 'create_quiz_alt' else ''}",
+                            "presentation_id": presentation_id,
+                            "slide": slide,
+                            "options": options,
+                            "slide_type": slide_type,
+                            "user_input": user_input
+                        }
+                        
+                        keyboard = [
+                            [InlineKeyboardButton("✅ Choose Option 1",callback_data=f"select:0:{presentation_id}")],
+                            [InlineKeyboardButton("✅ Choose Option 2",callback_data=f"select:1:{presentation_id}")],
+                            [InlineKeyboardButton("✅ Choose Option 3",callback_data=f"select:2:{presentation_id}")],
+                            [InlineKeyboardButton("🔄 Generate New Options",callback_data=f"skip:{'quiz_alt' if action == 'create_quiz_alt' else 'quiz'}:{presentation_id}")],
+                            [InlineKeyboardButton("❌ Cancel",callback_data=f"ai:menu:{presentation_id}")]
+                        ]
+                        reply_markup = InlineKeyboardMarkup(keyboard)
+                        
+                        await update.message.reply_text(
+                            message,
+                            parse_mode='Markdown',
+                            reply_markup=reply_markup
+                        )
+                    else:
+                        await update.message.reply_text("❌ Failed to generate quiz questions. Please try again.")
+                        user_states.pop(chat_id, None)
+                except Exception as e:
+                    print(f"Error creating quiz: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    await update.message.reply_text("❌ Error connecting to backend.")
+                    user_states.pop(chat_id, None)
+                
+                # Don't clear user state yet - they need to select an option
+                return
+            else:
+                await update.message.reply_text("Please send a text message with your requirements, or use the Skip button.")
                 return
     
     # check if waiting for slide number (goto functionality)

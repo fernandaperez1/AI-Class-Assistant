@@ -5,6 +5,7 @@ from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
 from db import database as db
 from pptx_utils import extract_text_from_pptx, convert_pptx_to_pdf, get_slide_count, convert_pptx_to_images
+from ai_utils import generate_question_slide, generate_example_slide, read_presentation, add_slide
 
 load_dotenv()
 
@@ -15,7 +16,11 @@ CORS(app, resources={r"/api/*": {"origins": "*"}})
 
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*")
 PORT = int(os.getenv("PORT", 5000))
-HOST = os.getenv("HOST", "0.0.0.0")
+HOST = os.getenv("HOST", "0.0.0")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+if not GOOGLE_API_KEY:
+    print("⚠️  WARNING: GOOGLE_API_KEY not set in .env file. AI features will not work.")
 
 socketio = SocketIO(app, cors_allowed_origins=CORS_ORIGINS)
 
@@ -467,14 +472,18 @@ def convert_presentation_to_images_endpoint(presentation_id):
         ]
         
         # Emit WebSocket event to notify frontend of updated slides
+        import time
+        cache_bust_token = int(time.time() * 1000)
+        
         socketio.emit(
             "presentation:slides_updated",
             {
                 "presentation_id": presentation_id,
-                "new_slide_count": result["slide_count"]
+                "new_slide_count": result["slide_count"],
+                "cache_bust": cache_bust_token
             }
         )
-        print(f"Emitted presentation:slides_updated event for presentation {presentation_id} with {result['slide_count']} slides")
+        print(f"Emitted presentation:slides_updated event for presentation {presentation_id} with {result['slide_count']} slides, cache_bust={cache_bust_token}")
         
         return jsonify({
             "presentation_id": presentation_id,
@@ -489,18 +498,28 @@ def convert_presentation_to_images_endpoint(presentation_id):
 
 @app.route("/api/presentations/<int:presentation_id>/slides/<int:slide_number>", methods=["GET"])
 def serve_slide_image(presentation_id, slide_number):
-    """Serve individual slide image with caching headers"""
+    """Serve individual slide image with cache busting support"""
     try:
-        # construct path to slide image
+        # Construct path to slide image
         image_dir = f"./slides/presentation_{presentation_id}_images"
         image_path = os.path.join(image_dir, f"slide-{slide_number}.png")
         
         if not os.path.exists(image_path):
             return jsonify({"error": f"Slide {slide_number} image not found"}), 404
         
-        # Send file with caching headers for better performance, might remove if I notice that my ram usage goes up by too much
+        # Check if version parameter is present (cache busting)
+        version = request.args.get('v')
+        
         response = send_file(image_path, mimetype='image/png')
-        response.headers['Cache-Control'] = 'public, max-age=3600'  # cache for 1 hour (in the user side ofc, I wont pay a cache xdd)
+        
+        if version:
+            # If version parameter is present, allow caching but make it revalidate
+            response.headers['Cache-Control'] = 'public, max-age=86400, must-revalidate'
+            response.headers['ETag'] = f'"{presentation_id}-{slide_number}-{version}"'
+        else:
+            # No version - shorter cache
+            response.headers['Cache-Control'] = 'public, max-age=300'
+        
         return response
     except Exception as e:
         print(f"Error serving slide image: {e}")
@@ -541,89 +560,122 @@ def get_presentation_info(class_id):
 def create_example():
     """
     Generate an example based on slide content and user input
-    still gotta Implement AI logic to generate examples
+    Returns 3 options for the user to choose from
     """
     try:
+        if not GOOGLE_API_KEY:
+            return jsonify({"error": "AI service not configured"}), 500
+        
         data = request.json
         presentation_id = data.get("presentation_id")
         slide_number = data.get("slide_number")
         telegram_chat_id = data.get("telegram_chat_id")
-        user_input = data.get("user_input")  # Text description or voice file_id (havent implemented the voice yet)
+        user_input = data.get("user_input", "")  # Text description or transcribed voice
         input_type = data.get("input_type", "text")  # "text" or "audio"
         voice_file_id = data.get("voice_file_id")  # Telegram file_id for voice messages
         
         print(f"AI: Creating example for presentation {presentation_id}, slide {slide_number}")
         print(f"    Input type: {input_type}, User request: {user_input[:50] if user_input and input_type=='text' else 'voice message'}")
         
-        # will put all of the ai stuff here
-        # 1. Get slide content from presentation
-        # 2. If input_type is "audio", transcribe the voice message using Whisper or similar
-        #    - Use voice_file_id to download audio from Telegram
-        #    - Transcribe audio to text
-        # 3. gen example
-        # 4. Return formatted example
+        # Get presentation info
+        presentation = db.get_presentation_by_id(presentation_id)
+        if not presentation:
+            return jsonify({"error": "Presentation not found"}), 404
         
-        # Placeholder
-        example = (
-            f"This is a placeholder example based on your request:\n"
-            f"_{user_input if input_type == 'text' else 'Voice message received'}_\n\n"
-            "**Example Problem:**\n"
-            "Given the concepts from this slide, try to solve...\n\n"
-            "**Solution:**\n"
-            "The answer would be...\n\n"
-            "_Note: AI implementation pending. Will use slide content + your input to generate real examples._"
+        pptx_path = presentation.get("original_pptx_path")
+        if not pptx_path or not os.path.exists(pptx_path):
+            return jsonify({"error": "PPTX file not found"}), 404
+        
+        # Read presentation content
+        prs, content = read_presentation(pptx_path)
+        
+        # Generate examples using AI (returns 3 options separated by [next])
+        ai_response = generate_example_slide(
+            api_key=GOOGLE_API_KEY,
+            presentation_content=content,
+            user_input=user_input,
+            slide_index=slide_number
         )
+        
+        # Split options
+        options = [opt.strip() for opt in ai_response.split("[next]") if opt.strip()]
+        
+        # Ensure we have 3 options
+        while len(options) < 3:
+            options.append(f"Example option {len(options) + 1} - Please request again for more variety")
+        options = options[:3]  # Take only first 3
         
         return jsonify({
             "presentation_id": presentation_id,
             "slide_number": slide_number,
-            "example": example
+            "options": options,
+            "user_input": user_input
         }), 200
         
     except Exception as e:
         print(f"Error creating example: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/ai/create-quiz", methods=["POST"])
 def create_quiz():
     """
-    Generate a quiz based on slide content
-    need to implement AI logic to generate quiz questions
+    Generate an open-ended quiz based on slide content
+    Returns 3 question options for the user to choose from
     """
     try:
+        if not GOOGLE_API_KEY:
+            return jsonify({"error": "AI service not configured"}), 500
+        
         data = request.json
         presentation_id = data.get("presentation_id")
         slide_number = data.get("slide_number")
         telegram_chat_id = data.get("telegram_chat_id")
+        user_input = data.get("user_input", "")  # Optional user context
         
         print(f"AI: Creating quiz for presentation {presentation_id}, slide {slide_number}")
         
-        # same, will implement AI logic here
-        # 1. Get slide content from presentation
-        # 2. Use OpenAI/Gemini to generate quiz questions
-        # 3. Return formatted quiz
+        # Get presentation info
+        presentation = db.get_presentation_by_id(presentation_id)
+        if not presentation:
+            return jsonify({"error": "Presentation not found"}), 404
         
-        # Placeholder response
-        quiz = (
-            "This is a placeholder quiz.\n\n"
-            "**Question 1:**\n"
-            "What is the main concept covered in this slide?\n\n"
-            "**Question 2:**\n"
-            "Explain the key points discussed.\n\n"
-            "**Question 3:**\n"
-            "How would you apply this concept?\n\n"
-            "_Note: AI implementation pending_"
+        pptx_path = presentation.get("original_pptx_path")
+        if not pptx_path or not os.path.exists(pptx_path):
+            return jsonify({"error": "PPTX file not found"}), 404
+        
+        # Read presentation content
+        prs, content = read_presentation(pptx_path)
+        
+        # Generate quiz questions using AI
+        ai_response = generate_question_slide(
+            api_key=GOOGLE_API_KEY,
+            presentation_content=content,
+            user_input=user_input,
+            slide_index=slide_number,
+            question_type="open-ended"
         )
+        
+        # Split options (each contains question + [Question Result:] + answer)
+        options = [opt.strip() for opt in ai_response.split("[next]") if opt.strip()]
+        
+        # Ensure we have 3 options
+        while len(options) < 3:
+            options.append(f"Question option {len(options) + 1} - Please request again")
+        options = options[:3]
         
         return jsonify({
             "presentation_id": presentation_id,
             "slide_number": slide_number,
-            "quiz": quiz
+            "options": options
         }), 200
         
     except Exception as e:
         print(f"Error creating quiz: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 
@@ -631,45 +683,216 @@ def create_quiz():
 def create_quiz_alternatives():
     """
     Generate a multiple choice quiz based on slide content
-    Implement AI logic to generate quiz with alternatives (will add asd the last feature before audio)
+    Returns 3 question options for the user to choose from
     """
     try:
+        if not GOOGLE_API_KEY:
+            return jsonify({"error": "AI service not configured"}), 500
+        
         data = request.json
         presentation_id = data.get("presentation_id")
         slide_number = data.get("slide_number")
         telegram_chat_id = data.get("telegram_chat_id")
+        user_input = data.get("user_input", "")  # Optional user context
         
         print(f"AI: Creating quiz with alternatives for presentation {presentation_id}, slide {slide_number}")
         
-        # 1. Get slide content from presentation
-        # 2. Use OpenAI/Gemini to generate multiple choice questions
-        # 3. Return formatted quiz with alternatives
+        # Get presentation info
+        presentation = db.get_presentation_by_id(presentation_id)
+        if not presentation:
+            return jsonify({"error": "Presentation not found"}), 404
         
-        # Placeholder response
-        quiz = (
-            "This is a placeholder multiple choice quiz.\n\n"
-            "**Question 1:** What is the main topic of this slide?\n"
-            "A) Option 1\n"
-            "B) Option 2\n"
-            "C) Option 3\n"
-            "D) Option 4\n\n"
-            "**Question 2:** Which statement is correct?\n"
-            "A) Option 1\n"
-            "B) Option 2\n"
-            "C) Option 3\n"
-            "D) Option 4\n\n"
-            "**Answers:** 1-C, 2-B\n\n"
-            "_Note:placeholder"
+        pptx_path = presentation.get("original_pptx_path")
+        if not pptx_path or not os.path.exists(pptx_path):
+            return jsonify({"error": "PPTX file not found"}), 404
+        
+        # Read presentation content
+        prs, content = read_presentation(pptx_path)
+        
+        # Generate multiple choice questions using AI
+        ai_response = generate_question_slide(
+            api_key=GOOGLE_API_KEY,
+            presentation_content=content,
+            user_input=user_input,
+            slide_index=slide_number,
+            question_type="multiple-choice"
         )
+        
+        # Split options
+        options = [opt.strip() for opt in ai_response.split("[next]") if opt.strip()]
+        
+        # Ensure we have 3 options
+        while len(options) < 3:
+            options.append(f"Question option {len(options) + 1} - Please request again")
+        options = options[:3]
         
         return jsonify({
             "presentation_id": presentation_id,
             "slide_number": slide_number,
-            "quiz": quiz
+            "options": options
         }), 200
         
     except Exception as e:
         print(f"Error creating quiz with alternatives: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/ai/insert-slide", methods=["POST"])
+def insert_slide():
+    """
+    Insert the selected AI-generated slide into the presentation
+    This is called after the user chooses one of the 3 options
+    
+    Expected payload:
+    {
+        "presentation_id": int,
+        "slide_content": str,  # The chosen option (full text)
+        "slide_title": str,    # e.g., "Quiz", "Example"
+        "slide_type": str,     # "example", "quiz", "quiz-alternatives"
+        "insert_after": int,   # Slide number to insert after (current slide)
+        "user_input": str,     # Original user request (for database)
+        "telegram_chat_id": int
+    }
+    """
+    try:
+        print("="*80)
+        print(f"[AI INSERT] Endpoint called at {__import__('datetime').datetime.now()}")
+        print(f"[AI INSERT] Request data: {request.json}")
+        print("="*80)
+        
+        if not GOOGLE_API_KEY:
+            return jsonify({"error": "AI service not configured"}), 500
+        
+        data = request.json
+        presentation_id = data.get("presentation_id")
+        slide_content = data.get("slide_content")
+        slide_title = data.get("slide_title", "AI Generated Slide")
+        slide_type = data.get("slide_type", "example")
+        insert_after = data.get("insert_after", 1)
+        user_input = data.get("user_input", "")
+        telegram_chat_id = data.get("telegram_chat_id")
+        
+        print(f"[AI INSERT] Inserting slide into presentation {presentation_id} after slide {insert_after}")
+        print(f"[AI INSERT] Type: {slide_type}, Title: {slide_title}")
+        
+        # Get presentation info
+        presentation = db.get_presentation_by_id(presentation_id)
+        if not presentation:
+            return jsonify({"error": "Presentation not found"}), 404
+        
+        pptx_path = presentation.get("original_pptx_path")
+        if not pptx_path or not os.path.exists(pptx_path):
+            return jsonify({"error": "PPTX file not found"}), 404
+        
+        # Load presentation
+        from pptx import Presentation as PptxPresentation
+        prs = PptxPresentation(pptx_path)
+        initial_slide_count = len(prs.slides)
+        print(f"[AI INSERT] Initial slide count: {initial_slide_count}")
+        
+        # Separate question and answer if it's a quiz
+        if "[Question Result:]" in slide_content:
+            question_part = slide_content.split("[Question Result:]")[0].strip()
+        else:
+            question_part = slide_content
+        
+        # Determine question type for formatting
+        question_type_format = "question"
+        if slide_type in ["quiz-alternatives", "multiple-choice"]:
+            question_type_format = "multiple-choice"
+        elif slide_type == "example":
+            question_type_format = "example"
+        
+        # Add the slide (appends to end)
+        print(f"[AI INSERT] Calling add_slide() with title='{slide_title}', type='{question_type_format}'")
+        add_slide(prs, slide_title, question_part, question_type=question_type_format)
+        after_add_count = len(prs.slides)
+        print(f"[AI INSERT] After add_slide(): {after_add_count} slides (added {after_add_count - initial_slide_count})")
+        
+        # Move the slide to the correct position (after insert_after)
+        # PowerPoint slides are 0-indexed in the API
+        # If insert_after=3 (1-based), we want to insert at index 3 (0-based), which is AFTER slide 3
+        # Example: [0, 1, 2, 3, 4] - insert at index 3 means new slide becomes index 3, old index 3 becomes 4
+        # NO! We want the new slide AFTER position 3, so it should be at index 4 in the final array
+        # Current slides: 0, 1, 2, 3(current), 4, 5
+        # After insert at position 4: 0, 1, 2, 3(current), 4(NEW), 5, 6
+        
+        slides = list(prs.slides)
+        new_slide = slides[-1]  # The slide we just added (at the end)
+        
+        print(f"[AI INSERT] Moving slide from end (index {len(slides)-1}) to position after slide {insert_after}")
+        print(f"[AI INSERT] Current slides before move: {[f'Slide {i+1}' for i in range(len(slides))]}")
+        
+        # insert_after is 1-based. To insert AFTER position N (1-based), we insert at index N (0-based)
+        # Example: insert_after=3 means "after slide 3", so new slide becomes slide 4, insert at index 3
+        target_index = insert_after  # This is correct: insert_after=3 (1-based) → index 3 (0-based) = position 4 (1-based)
+        
+        # Move slide by rearranging the XML
+        xml_slides = prs.slides._sldIdLst
+        slides_list = list(xml_slides)
+        print(f"[AI INSERT] XML slides count before pop: {len(slides_list)}")
+        moved_slide = slides_list.pop()  # Remove the last slide (the one we just added)
+        print(f"[AI INSERT] XML slides count after pop: {len(slides_list)}")
+        xml_slides.insert(target_index, moved_slide)  # Insert at target position
+        print(f"[AI INSERT] XML slides count after insert: {len(list(xml_slides))}")
+        print(f"[AI INSERT] Inserted slide at index {target_index} (position {target_index + 1} in 1-based numbering)")
+        
+        # Save the modified presentation
+        prs.save(pptx_path)
+        print(f"[AI INSERT] Saved presentation to {pptx_path}")
+        
+        # Reload to verify
+        prs_verify = PptxPresentation(pptx_path)
+        verify_count = len(prs_verify.slides)
+        print(f"[AI INSERT] Verification: Reloaded PPTX has {verify_count} slides")
+        
+        # Convert to images - FORCE REGENERATION since we added a new slide
+        output_dir = "./slides"
+        print(f"[AI INSERT] Converting PPTX to images (force_regenerate=True)...")
+        result = convert_pptx_to_images(pptx_path, output_dir, presentation_id, force_regenerate=True)
+        print(f"[AI INSERT] Conversion result: {result['slide_count']} slides converted")
+        
+        # Update slide count in database
+        new_slide_count = result["slide_count"]
+        db.update_slide_metadata(presentation_id, slide_count=new_slide_count)
+        
+        # TODO: Save to database - the user's input and the AI response
+        # db.add_question(
+        #     presentation_id=presentation_id,
+        #     question=user_input,
+        #     answer=slide_content,
+        #     slide_index=target_index + 1
+        # )
+        
+        # Emit WebSocket event to notify frontend
+        import time
+        cache_bust_token = int(time.time() * 1000)  # millisecond timestamp
+        
+        socketio.emit(
+            "presentation:slides_updated",
+            {
+                "presentation_id": presentation_id,
+                "new_slide_count": new_slide_count,
+                "inserted_at": target_index + 1,
+                "cache_bust": cache_bust_token  # Force complete cache refresh
+            }
+        )
+        print(f"[AI] Emitted slides_updated event: {new_slide_count} slides, cache_bust={cache_bust_token}")
+        
+        return jsonify({
+            "success": True,
+            "presentation_id": presentation_id,
+            "new_slide_count": new_slide_count,
+            "inserted_at": target_index + 1,
+            "message": f"Slide inserted successfully after slide {insert_after}"
+        }), 200
+        
+    except Exception as e:
+        print(f"Error inserting slide: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 

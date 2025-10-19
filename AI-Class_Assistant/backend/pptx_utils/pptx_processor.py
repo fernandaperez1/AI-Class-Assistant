@@ -88,41 +88,28 @@ def get_slide_count(pptx_path):
         raise Exception(f"Error reading PPTX: {str(e)}")
 
 
-def convert_pptx_to_images(pptx_path, output_dir=None, presentation_id=None):
+def convert_pptx_to_images(pptx_path, output_dir, presentation_id, force_regenerate=False):
     """
-    Convert PPTX to individual PNG images using LibreOffice.
-    Each slide becomes a separate image file.
+    Convert a PPTX file to individual slide images (PNG)
+    Uses LibreOffice to convert to PDF, then pdftoppm or ImageMagick to convert PDF to images
     
     Args:
         pptx_path: Path to the PPTX file
-        output_dir: Base directory for output (default: ./slides)
-        presentation_id: ID to create subdirectory for this presentation
+        output_dir: Directory to save the images
+        presentation_id: Presentation ID for organizing images
+        force_regenerate: If True, regenerate images even if they already exist
     
-    ret:
-        dict: {
-            "image_dir": path to directory containing images,
-            "slide_count": number of slides,
-            "images": list of image filenames
-        }
+    Returns:
+        Dictionary with image_dir, slide_count, and images list
     """
-    if not os.path.exists(pptx_path):
-        raise FileNotFoundError(f"PPTX file not found: {pptx_path}")
     
-    if output_dir is None:
-        output_dir = "./slides"
-    
-    # organizing by folder (got tired of deleting 1 by 1)
-    if presentation_id:
-        image_dir = os.path.join(output_dir, f"presentation_{presentation_id}_images")
-    else:
-        base_name = Path(pptx_path).stem
-        image_dir = os.path.join(output_dir, f"{base_name}_images")
+    image_dir = os.path.join(output_dir, f"presentation_{presentation_id}_images")
     
     os.makedirs(image_dir, exist_ok=True)
     
     # Check if images already exist
     existing_images = sorted([f for f in os.listdir(image_dir) if f.endswith('.png')])
-    if existing_images:
+    if existing_images and not force_regenerate:
         print(f"Images already exist in: {image_dir}")
         return {
             "image_dir": image_dir,
@@ -130,10 +117,16 @@ def convert_pptx_to_images(pptx_path, output_dir=None, presentation_id=None):
             "images": existing_images
         }
     
+    #if force_regenerate, delete existing images first (could optimize this, couldnt be bothered tho)
+    if force_regenerate and existing_images:
+        print(f"Force regenerating images in: {image_dir}")
+        for img in existing_images:
+            os.remove(os.path.join(image_dir, img))
+    
     try:
-        # LibreOffice converts PPTX to PDF first, then we convert PDF to images
-        # Alternative: Use --convert-to png directly (creates one image per slide) only if it fails, cz idk if it will work on deploy
-        # first convert to PDF in a temp location
+        #LibreOffice converts PPTX to PDF first, then we convert PDF to images
+        #fallback: Use --convert-to png directly (creates one image per slide) only if it fails, cz idk if it will work on deploy
+        #first convert to PDF in a temp location
         temp_pdf = os.path.join(image_dir, "temp_presentation.pdf")
         
         subprocess.run([

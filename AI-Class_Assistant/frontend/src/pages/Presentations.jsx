@@ -105,12 +105,12 @@ function Presentations({ user }) {
       }
     };
 
-    const handleSlideAdded = ({ presentation_id, new_slide_count }) => {
+    const handleSlideAdded = ({ presentation_id, new_slide_count, cache_bust }) => {
       if (presentation_id === presentationId) {
-        console.log(`Slides added! New count: ${new_slide_count}`);
+        console.log(`Slides added! New count: ${new_slide_count}, cache_bust: ${cache_bust}`);
         setTotalSlides(new_slide_count);
-        //force reload current slide image
-        setImageVersion(prev => prev + 1);
+        // changed the cache I had cz the images would not refresh, the cache bust is the time it will stay
+        setImageVersion(cache_bust || Date.now());
       }
     };
 
