@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import CreateClassModal from "../components/CreateClassModal";
 import { useNavigate } from "react-router-dom";
 import { API_URL } from "../config";
+import socket from "../sockets/socket";
 import "./Home.css";
 
 export default function HomePage({ user }) {
@@ -33,6 +34,26 @@ export default function HomePage({ user }) {
   useEffect(() => {
     if (user?.id) fetchClasses();
   }, [user]);
+
+  //listen for telegram:linked event to update UI
+  useEffect(() => {
+    if (!user?.firebase_uid) return;
+
+    const handleTelegramLinked = (data) => {
+      //only update if the event is for the current user
+      if (data.firebase_uid === user.firebase_uid) {
+        console.log("[TELEGRAM] Account linked via WebSocket, reloading page...");
+        // Reload the page to fetch updated user data
+        window.location.reload();
+      }
+    };
+
+    socket.on("telegram:linked", handleTelegramLinked);
+
+    return () => {
+      socket.off("telegram:linked", handleTelegramLinked);
+    };
+  }, [user?.firebase_uid]);
 
   const handleDeleteClass = async (classId) => {
     if (!window.confirm("Are you sure you want to delete this class?")) return;

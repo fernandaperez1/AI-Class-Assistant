@@ -48,7 +48,7 @@ A real-time educational assistant that helps teachers interact with their course
 ## Core Technologies
 
 - **Frontend:** React, Firebase Auth, WebSocket  
-- **Backend:** Flask, WebSocket, Python-pptx, OpenAI API, LibreOffice (headless), PostgreSQL  
+- **Backend:** Flask, WebSocket, Python-pptx, Gemini API, LibreOffice (headless), PostgreSQL  
 - **Bot:** Telegram (python-telegram-bot)  
 - **Deployment:** Docker + Docker Compose  
 

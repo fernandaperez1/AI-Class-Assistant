@@ -128,7 +128,13 @@ function Presentations({ user }) {
     
     try {
       const telegramChatId = user?.telegram_chat_id || null;
-      console.log("Starting presentation with:", { presentationId, telegramChatId, user });
+      
+      // log Telegram
+      if (telegramChatId) {
+        console.log("Starting presentation with Telegram bot integration:", { presentationId, telegramChatId });
+      } else {
+        console.log("Starting presentation without Telegram bot (no account linked):", { presentationId });
+      }
       
       await startPresentation(presentationId, telegramChatId, currentSlide);
       setPresentationStarted(true);
@@ -263,6 +269,11 @@ function Presentations({ user }) {
 
   return (
     <div className="presentation-wrapper">
+      {!user?.telegram_chat_id && (
+        <div className="telegram-notice">
+          ℹ️ <strong>Tip:</strong> Link your Telegram account on the Home page to control presentations from your phone and use AI features!
+        </div>
+      )}
       <div className="presentation-controls">
         {!presentationStarted ? (
           <button onClick={handleStartPresentation} className="control-btn start-btn">

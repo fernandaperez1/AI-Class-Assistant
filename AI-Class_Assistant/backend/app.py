@@ -103,9 +103,19 @@ def link_telegram():
             telegram_chat_id=data["telegram_chat_id"]
         )
         if user:
+            print(f"[TELEGRAM] Account linked: user_id={user['id']}, telegram_chat_id={data['telegram_chat_id']}")
+            
+            # Emit WebSocket event to notify frontend that account was linked
+            socketio.emit("telegram:linked", {
+                "user_id": user["id"],
+                "firebase_uid": user["firebase_uid"],
+                "telegram_chat_id": user["telegram_chat_id"]
+            })
+            
             return jsonify(user), 200
         return jsonify({"error": "Invalid or expired code"}), 400
     except Exception as e:
+        print(f"[TELEGRAM] Error linking account: {e}")
         return jsonify({"error": str(e)}), 500
     
 @app.route("/api/telegram/unlink", methods=["POST"])
