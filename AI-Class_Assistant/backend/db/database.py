@@ -136,7 +136,7 @@ def unlink_telegram_account(telegram_chat_id):
         cursor.execute(
             """
             UPDATE users
-            SET SET telegram_chat_id = NULL,
+            SET telegram_chat_id = NULL,
                 telegram_link_code = NULL,
                 telegram_link_code_expires_at = NULL
             WHERE telegram_chat_id = %s 

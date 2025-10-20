@@ -12,6 +12,7 @@ export default function HomePage({ user }) {
   const [isTelegramOpen, setIsTelegramOpen] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [classes, setClasses] = useState([]);
+  const [isUnlinking, setIsUnlinking] = useState(false);
 
   const navigate = useNavigate();
 
@@ -176,6 +177,37 @@ export default function HomePage({ user }) {
     setShowModal(false);
   };
 
+  const handleUnlinkTelegram = async () => {
+    if (!user?.telegram_chat_id) return;
+
+    if (!window.confirm("Are you sure you want to unlink your Telegram account?")) return;
+
+    setIsUnlinking(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`${API_URL}/api/telegram/unlink`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ telegram_chat_id: user.telegram_chat_id }), 
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to unlink Telegram");
+      }
+
+      alert("Telegram account unlinked successfully! Reloading page...");
+      window.location.reload();
+      
+    } catch (err) {
+      console.error("Error unlinking Telegram:", err);
+      setError(`Failed to unlink Telegram: ${err.message}`);
+    } finally {
+      setIsUnlinking(false);
+    }
+  };
+
   return (
     <div className="home-page">
       <div className="home-container">
@@ -211,6 +243,13 @@ export default function HomePage({ user }) {
                       You can now interact with the Class Assistant bot on
                       Telegram to ask questions during presentations.
                     </p>
+                    <button
+                        className="generate-button"
+                        onClick={handleUnlinkTelegram}
+                        disabled={isUnlinking}
+                    >
+                        {isUnlinking ? "Unlinking..." : "Unlink Telegram"}
+                    </button>
                   </div>
                 ) : (
                   <>
