@@ -1,25 +1,54 @@
 .presentation-wrapper {
   width: 100vw;
-  height: 100vh;
+  min-height: 100vh;
   background: #111;
   display: flex;
   flex-direction: column;
-  position: relative;
+  align-items: center;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+.presentation-top-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 90%;
+  max-width: 1200px;
+  margin: 20px 0;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.presentation-container {
+  width: 90%;
+  max-width: 1200px;
+  aspect-ratio: 16 / 9;
+  background: black;
+  color: black;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  border: 3px solid black;
+  font-size: clamp(1.5rem, 3vw, 2.5rem);
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-bottom: 20px;
+}
+
+.pdf-viewer .slide-navigation {
+    display: none;
 }
 
 .telegram-notice {
-  position: absolute;
-  top: 20px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 1000;
+  flex: 1;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white;
-  padding: 12px 24px;
-  border-radius: 8px;
-  font-size: 14px;
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
-  animation: slideDown 0.3s ease-out;
+  padding: 12px 20px;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: clamp(0.8rem, 2vw, 1rem);
 }
 
 @keyframes slideDown {
@@ -34,13 +63,9 @@
 }
 
 .presentation-controls {
-  position: absolute;
-  top: 20px;
-  right: 20px;
-  z-index: 1000;
   display: flex;
-  gap: 10px;
   align-items: center;
+  justify-content: flex-end;
 }
 
 .slide-counter {
@@ -52,15 +77,16 @@
   font-weight: 600;
 }
 
+
 .control-btn {
-  padding: 10px 20px;
+  padding: 0.8rem 1.5rem;
   border: none;
   border-radius: 8px;
-  font-size: 14px;
+  font-size: clamp(0.9rem, 1.8vw, 1.2rem);
   font-weight: 600;
   cursor: pointer;
-  transition: all 0.3s ease;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  transition: all 0.3s ease;
 }
 
 .start-btn {
@@ -104,29 +130,22 @@
 }
 
 .slide-navigation {
-  position: absolute;
-  bottom: 30px;
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
-  gap: 20px;
+  justify-content: center;
   align-items: center;
-  background: rgba(0, 0, 0, 0.7);
-  padding: 12px 24px;
-  border-radius: 30px;
-  backdrop-filter: blur(10px);
+  gap: 20px;
+  background: transparent;
+  margin-bottom: 20px;
 }
 
 .nav-btn {
-  padding: 8px 16px;
-  background: rgba(255, 255, 255, 0.1);
-  color: white;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  padding: 0.5rem 1rem;
+  font-size: clamp(0.9rem, 2vw, 1rem);
   border-radius: 20px;
   cursor: pointer;
-  transition: all 0.3s ease;
-  font-size: 14px;
-  font-weight: 500;
+  border: 1px solid #aaa;
+  background: #222;
+  color: white;
 }
 
 .nav-btn:hover:not(:disabled) {
@@ -206,3 +225,33 @@
   max-width: 500px;
 }
 
+@media (max-width: 768px) {
+  .presentation-top-bar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .telegram-notice,
+  .presentation-controls {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .control-btn {
+    width: 80%;
+  }
+
+  .presentation-container {
+    width: 95%;
+  }
+}
+
+@media (max-width: 480px) {
+  .presentation-container {
+    aspect-ratio: 4 / 3;
+  }
+
+  .nav-btn {
+    padding: 0.4rem 0.8rem;
+  }
+}

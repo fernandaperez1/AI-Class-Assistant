@@ -269,65 +269,70 @@ function Presentations({ user }) {
 
   return (
     <div className="presentation-wrapper">
-      {!user?.telegram_chat_id && (
-        <div className="telegram-notice">
-          ℹ️ <strong>Tip:</strong> Link your Telegram account on the Home page to control presentations from your phone and use AI features!
-        </div>
-      )}
-      <div className="presentation-controls">
-        {!presentationStarted ? (
-          <button onClick={handleStartPresentation} className="control-btn start-btn">
-            Start Presentation
-          </button>
-        ) : (
-          <>
-            <button onClick={handleEndPresentation} className="control-btn end-btn">
-              End Presentation
-            </button>
-            <div className="slide-counter">
-              Slide {currentSlide} / {totalSlides}
-            </div>
-          </>
+      <div className="presentation-top-bar">
+        {!user?.telegram_chat_id && (
+          <div className="telegram-notice">
+            ℹ️ <strong>Tip:</strong> Link your Telegram account on the Home page to control presentations from your phone and use AI features!
+          </div>
         )}
+        <div className="presentation-controls">
+          {!presentationStarted ? (
+            <button onClick={handleStartPresentation} className="control-btn start-btn">
+              Start Presentation
+            </button>
+          ) : (
+            <>
+              <button onClick={handleEndPresentation} className="control-btn end-btn">
+                End Presentation
+              </button>
+              <div className="slide-counter">
+                Slide {currentSlide} / {totalSlides}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="presentation-container">
+        <div className="pdf-viewer" ref={containerRef}>
+          <img 
+            ref={imageRef}
+            src={getSlideImageUrl(presentationId, currentSlide) + `?v=${imageVersion}`}
+            alt={`Slide ${currentSlide}`}
+            style={{
+              width: '100%',
+              height: '100%',
+              objectFit: 'contain',
+              backgroundColor: '#000'
+            }}
+            onError={(e) => {
+              console.error(`Failed to load slide ${currentSlide}`);
+              e.target.src = ''; // Prevent infinite reload loops
+            }}
+          />
+        </div>
+      </div>
+
+      <div className="slide-navigation">
+        <button 
+          onClick={goToPrevSlide} 
+          disabled={currentSlide === 1}
+          className="nav-btn prev-btn"
+        >
+          ← Previous
+        </button>
+        <span className="slide-info">
+          {currentSlide} / {totalSlides}
+        </span>
+        <button 
+          onClick={goToNextSlide} 
+          disabled={currentSlide === totalSlides}
+          className="nav-btn next-btn"
+        >
+          Next →
+        </button>
       </div>
       
-      <div className="pdf-viewer" ref={containerRef}>
-        <img 
-          ref={imageRef}
-          src={getSlideImageUrl(presentationId, currentSlide) + `?v=${imageVersion}`}
-          alt={`Slide ${currentSlide}`}
-          style={{
-            width: '100%',
-            height: '100%',
-            objectFit: 'contain',
-            backgroundColor: '#000'
-          }}
-          onError={(e) => {
-            console.error(`Failed to load slide ${currentSlide}`);
-            e.target.src = ''; // Prevent infinite reload loops
-          }}
-        />
-        
-        <div className="slide-navigation">
-          <button 
-            onClick={goToPrevSlide} 
-            disabled={currentSlide === 1}
-            className="nav-btn prev-btn"
-          >
-            ← Previous
-          </button>
-          <span className="slide-info">
-            {currentSlide} / {totalSlides}
-          </span>
-          <button 
-            onClick={goToNextSlide} 
-            disabled={currentSlide === totalSlides}
-            className="nav-btn next-btn"
-          >
-            Next →
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
