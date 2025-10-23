@@ -8,6 +8,7 @@ import Presentations from "./pages/Presentations.jsx";
 import LoginPage from "./pages/Login";
 import HomePage from "./pages/Home";
 import ChatPage from "./pages/Chat";
+import InfoPage from "./pages/Info";
 import "./App.css";
 
 export default function App() {
@@ -91,6 +92,14 @@ export default function App() {
         <Route
           path="*"
           element={<Navigate to={user ? "/home" : "/login"} replace />}
+        />
+        <Route
+          path="/class/:classId/info"
+          element={
+            <ProtectedRoute user={user}>
+              <InfoPage user={user} />
+            </ProtectedRoute>
+          }
         />
       </Routes>
     </>

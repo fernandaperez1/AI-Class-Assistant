@@ -354,7 +354,7 @@ export default function HomePage({ user }) {
         <div className="class-buttons">
           <button
             className="info-button"
-            onClick={() => console.log("Info", cls.id)}
+            onClick={() => navigate(`/class/${cls.id}/info`)}
           >
             Info
           </button>

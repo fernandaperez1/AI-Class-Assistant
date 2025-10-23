@@ -1,0 +1,43 @@
+.info-page {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
+  color: #333;
+}
+
+.info-container {
+  background: white;
+  border-radius: 12px;
+  padding: 2rem 3rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  max-width: 600px;
+  width: 100%;
+  text-align: left;
+}
+
+.info-card p {
+  margin: 0.6rem 0;
+  font-size: 1.1rem;
+}
+
+.error-text {
+  color: #e63946;
+  font-weight: bold;
+}
+
+.back-button {
+  margin-top: 1.5rem;
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 20px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: background 0.3s ease;
+}
+
+.back-button:hover {
+  background: #5567d3;
+}
