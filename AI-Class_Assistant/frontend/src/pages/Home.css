@@ -367,6 +367,27 @@
   color: white;
 }
 
+.reset-button {
+  background: linear-gradient(135deg, #5bc0de 0%, #31b0d5 100%);
+  color: white;
+}
+
+.download-button {
+  background: linear-gradient(135deg, #5cb85c 0%, #4cae4c 100%);
+  color: white;
+}
+
+.slide-info {
+  font-size: 0.9rem;
+  color: #667eea;
+  font-weight: 600;
+  margin-top: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  background: #f0f4ff;
+  border-radius: 4px;
+  display: inline-block;
+}
+
 /* Responsiveness */
 @media (max-width: 768px) {
   .features-grid {

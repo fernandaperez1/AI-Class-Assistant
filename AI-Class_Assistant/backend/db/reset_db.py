@@ -1,13 +1,9 @@
-"""
-Database reset utility for Class Assistant Platform
-This script connects to PostgreSQL and resets the database schema
-"""
 import os
+import shutil
 import psycopg2
 from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT
 from dotenv import load_dotenv
 
-# Load environment variables
 load_dotenv()
 
 # Database configuration from environment variables
@@ -19,7 +15,6 @@ DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
 
 
 def get_connection(database=None):
-    """Create a database connection"""
     try:
         conn = psycopg2.connect(
             host=DB_HOST,
@@ -35,8 +30,6 @@ def get_connection(database=None):
 
 
 def create_database():
-    """Create the database if it doesn't exist"""
-    # Connect to the default 'postgres' database to create our database
     conn = get_connection(database="postgres")
     if not conn:
         return False
@@ -109,6 +102,55 @@ def reset_database():
         return False
 
 
+def delete_uploaded_files():
+    """Delete all files in uploads and slides folders"""
+    # Get the backend directory path
+    backend_dir = os.path.dirname(os.path.dirname(__file__))
+    uploads_dir = os.path.join(backend_dir, "uploads")
+    slides_dir = os.path.join(backend_dir, "slides")
+    
+    deleted_count = 0
+    
+    try:
+        # Delete all files in uploads folder (except README.md)
+        if os.path.exists(uploads_dir):
+            print(f"Cleaning uploads folder: {uploads_dir}")
+            for filename in os.listdir(uploads_dir):
+                if filename != "README.md":
+                    file_path = os.path.join(uploads_dir, filename)
+                    try:
+                        if os.path.isfile(file_path):
+                            os.remove(file_path)
+                            deleted_count += 1
+                            print(f"  - Deleted: {filename}")
+                    except Exception as e:
+                        print(f"  - Error deleting {filename}: {e}")
+        
+        # Delete all files and folders in slides folder (except README.md)
+        if os.path.exists(slides_dir):
+            print(f"Cleaning slides folder: {slides_dir}")
+            for item in os.listdir(slides_dir):
+                if item != "README.md":
+                    item_path = os.path.join(slides_dir, item)
+                    try:
+                        if os.path.isfile(item_path):
+                            os.remove(item_path)
+                            deleted_count += 1
+                            print(f"  - Deleted file: {item}")
+                        elif os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                            deleted_count += 1
+                            print(f"  - Deleted folder: {item}")
+                    except Exception as e:
+                        print(f"  - Error deleting {item}: {e}")
+        
+        print(f"\nTotal items deleted: {deleted_count}")
+        return True
+    except Exception as e:
+        print(f"Error cleaning files: {e}")
+        return False
+
+
 def verify_schema():
     conn = get_connection()
     if not conn:
@@ -155,7 +197,12 @@ if __name__ == "__main__":
         exit(1)
     print()
     
-    print("Step 3: Verifying schema...")
+    print("Step 3: Deleting uploaded files...")
+    if not delete_uploaded_files():
+        print("Warning: Failed to delete some files.")
+    print()
+    
+    print("Step 4: Verifying schema...")
     if not verify_schema():
         print("Failed to verify schema.")
         exit(1)
@@ -163,4 +210,5 @@ if __name__ == "__main__":
     
     print("=" * 60)
     print("Database reset completed successfully!")
+    print("All uploaded files and slides have been deleted!")
     print("=" * 60)

@@ -1,37 +1,42 @@
 import React, { useState, useEffect } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+import { Routes, Route, Navigate, useNavigate } from "react-router-dom";
 import { subscribeToAuthChanges } from "./firebase";
 import { API_URL } from "./config";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Navbar from "./components/Navbar.jsx";
 import Presentations from "./pages/Presentations.jsx";
-
 import LoginPage from "./pages/Login";
 import HomePage from "./pages/Home";
 import ChatPage from "./pages/Chat";
+import InfoPage from "./pages/Info";
 import "./App.css";
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const unsubscribe = subscribeToAuthChanges(async (firebaseUser) => {
       if (firebaseUser) {
         try {
-          // Fetch user from backend
           const res = await fetch(`${API_URL}/api/users/${firebaseUser.uid}`);
-          
+
           if (res.ok) {
             const backendUser = await res.json();
-            console.log("Backend user loaded:", backendUser);
             setUser(backendUser);
+            console.log("Backend user loaded:", backendUser);
+
+            if (window.localStorage.getItem("new_user")) {
+              window.localStorage.removeItem("new_user");
+              navigate("/home", { replace: true });
+            }
+
           } else {
-            console.error("Failed to fetch backend user, status:", res.status);
             setUser(null);
           }
         } catch (err) {
-          console.error("Failed to fetch backend user:", err);
+          console.error("Backend fetch failed:", err);
           setUser(null);
         }
       } else {
@@ -41,7 +46,7 @@ export default function App() {
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [navigate]);
 
   if (authLoading) {
     return (
@@ -53,14 +58,13 @@ export default function App() {
   }
 
   return (
-    <BrowserRouter>
+    <>
       {user && <Navbar user={user} />}
       <Routes>
         <Route
           path="/login"
           element={user ? <Navigate to="/home" replace /> : <LoginPage />}
         />
-
         <Route
           path="/home"
           element={
@@ -69,7 +73,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/class/:classId/presentation"
           element={
@@ -78,7 +81,6 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
         <Route
           path="/chat"
           element={
@@ -87,10 +89,19 @@ export default function App() {
             </ProtectedRoute>
           }
         />
-
-        {/* Default redirect */}
-        <Route path="*" element={<Navigate to={user ? "/home" : "/login"} replace />} />
+        <Route
+          path="*"
+          element={<Navigate to={user ? "/home" : "/login"} replace />}
+        />
+        <Route
+          path="/class/:classId/info"
+          element={
+            <ProtectedRoute user={user}>
+              <InfoPage user={user} />
+            </ProtectedRoute>
+          }
+        />
       </Routes>
-    </BrowserRouter>
+    </>
   );
 }

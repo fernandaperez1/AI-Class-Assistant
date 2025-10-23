@@ -2,10 +2,12 @@ import React, { useState } from "react";
 import { signInWithGoogle } from "../firebase";
 import { API_URL } from "../config";
 import "./Login.css";
+import { useNavigate } from "react-router-dom";
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const navigate = useNavigate();
 
   const handleGoogleLogin = async () => {
     setLoading(true);
@@ -19,10 +21,13 @@ export default function LoginPage() {
       let backendUser;
       try {
         const getRes = await fetch(`${API_URL}/api/users/${fbUser.uid}`);
-        
+
         if (getRes.ok) {
+          //user already exists
           backendUser = await getRes.json();
           console.log("User found in backend:", backendUser);
+          //don't set new_user flag for existing users
+          navigate("/home", { replace: true });
         } else if (getRes.status === 404) {
           // User doesn't exist, create new user
           console.log("User not found, creating new user...");
@@ -41,6 +46,10 @@ export default function LoginPage() {
 
           backendUser = await createRes.json();
           console.log("User created in backend:", backendUser);
+
+          //set flag for new user,App.jsx will use this to navigate to the home, after the new user is created
+          window.localStorage.setItem("new_user", "true");
+          navigate("/home", { replace: true });
         } else {
           throw new Error("Failed to fetch user from backend");
         }
@@ -48,7 +57,7 @@ export default function LoginPage() {
         console.error("Backend error:", err);
         throw new Error("Could not connect to backend");
       }
-
+      
       // User is now authenticated and stored in backend
       // The App.jsx will handle the navigation through auth state change
       
@@ -67,19 +76,20 @@ export default function LoginPage() {
         <p className="login-subtitle">
           Your AI-powered educational assistant for interactive learning
         </p>
-        
+
         {error && <div className="login-error">{error}</div>}
-        
-        <button 
-          className="login-button" 
+
+        <button
+          className="login-button"
           onClick={handleGoogleLogin}
           disabled={loading}
         >
           {loading ? "Logging in..." : "Log in with Google"}
         </button>
-        
+
         <p className="login-info">
-          Sign in to create classes, interact with AI-generated content, and link your Telegram account
+          Sign in to create classes, interact with AI-generated content, and
+          link your Telegram account
         </p>
       </div>
     </div>

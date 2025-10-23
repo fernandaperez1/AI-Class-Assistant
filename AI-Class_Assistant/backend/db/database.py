@@ -130,6 +130,22 @@ def link_telegram_account(link_code, telegram_chat_id):
         result = cursor.fetchone()
         return dict(result) if result else None
 
+def unlink_telegram_account(telegram_chat_id):
+    """unlink a Telegram account using the one-time code"""
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE users
+            SET telegram_chat_id = NULL,
+                telegram_link_code = NULL,
+                telegram_link_code_expires_at = NULL
+            WHERE telegram_chat_id = %s 
+            RETURNING id, firebase_uid, email, telegram_chat_id
+            """,
+            (telegram_chat_id,)
+        )
+        result = cursor.fetchone()
+        return dict(result) if result else None
 
 # Class operations
 def create_class(user_id, subject, difficulty_level, class_name=None):
@@ -204,15 +220,17 @@ def get_class_by_id(class_id):
 
 
 def get_user_classes(user_id):
-    """Get all classes for a user"""
+    """Get all classes for a user with presentation info"""
     with get_db_cursor() as cursor:
         cursor.execute(
             """
-            SELECT id, user_id, class_name, subject, difficulty_level,
-                   created_at, updated_at
-            FROM classes
-            WHERE user_id = %s
-            ORDER BY created_at DESC
+            SELECT c.id, c.user_id, c.class_name, c.subject, c.difficulty_level,
+                   c.created_at, c.updated_at,
+                   p.id as presentation_id, p.slide_count, p.original_pptx_path
+            FROM classes c
+            LEFT JOIN presentations p ON c.id = p.class_id
+            WHERE c.user_id = %s
+            ORDER BY c.created_at DESC
             """,
             (user_id,)
         )
