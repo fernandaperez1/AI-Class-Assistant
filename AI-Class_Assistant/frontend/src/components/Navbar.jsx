@@ -2,6 +2,7 @@ import React from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { logout } from "../services/auth";
 import "./Navbar.css";
+import logo from "../assets/logo_blanco.png";
 
 export default function Navbar({ user }) {
   const navigate = useNavigate();
@@ -19,7 +20,8 @@ export default function Navbar({ user }) {
     <nav className="navbar">
       <div className="navbar-container">
         <Link className="navbar-brand" to="/home">
-          🎓 TutorFlow
+          <img src={logo} alt="TutorFlow logo" className="navbar-logo" />
+          <span className="navbar-title">TutorFlow</span>
         </Link>
 
         <div className="navbar-menu">
