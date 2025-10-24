@@ -379,6 +379,14 @@ def reset_presentation(class_id):
         #Update slide count in database
         db.update_slide_metadata(presentation_id,slide_count=reset_slide_count)
         
+        # Delete all AI-generated slides from database since we're resetting to original
+        deleted_count = db.delete_presentation_ai_slides(presentation_id)
+        print(f"[RESET] Deleted {deleted_count} AI slides from database")
+        
+        # Reset the ai_generated_slide_indices array
+        db.reset_ai_generated_slide_indices(presentation_id)
+        print(f"[RESET] Reset ai_generated_slide_indices array")
+        
         # Delete old slide images directory
         image_dir = f"./slides/presentation_{presentation_id}_images"
         if os.path.exists(image_dir):
@@ -562,28 +570,29 @@ def control_presentation(presentation_id):
 
 
 
-@app.route("/api/presentations/<int:presentation_id>/questions", methods=["POST"])
-def add_question(presentation_id):
-    """Add a question and answer to a presentation"""
+@app.route("/api/presentations/<int:presentation_id>/ai-slides", methods=["POST"])
+def add_ai_slide_endpoint(presentation_id):
+    """Add an AI-generated slide (example or question) to a presentation"""
     try:
         data = request.json
-        question = db.add_question(
+        ai_slide = db.add_ai_slide(
             presentation_id=presentation_id,
-            question=data["question"],
-            answer=data["answer"],
+            slide_content=data["slide_content"],
+            user_input=data["user_input"],
+            answer=data.get("answer"),  # Optional for examples
             slide_index=data.get("slide_index")
         )
-        return jsonify(question), 201
+        return jsonify(ai_slide), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/presentations/<int:presentation_id>/questions", methods=["GET"])
-def get_questions(presentation_id):
-    """Get all questions for a presentation"""
+@app.route("/api/presentations/<int:presentation_id>/ai-slides", methods=["GET"])
+def get_ai_slides(presentation_id):
+    """Get all AI-generated slides for a presentation"""
     try:
-        questions = db.get_presentation_questions(presentation_id)
-        return jsonify(questions), 200
+        ai_slides = db.get_presentation_ai_slides(presentation_id)
+        return jsonify(ai_slides), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1027,7 +1036,6 @@ def insert_slide():
             return jsonify({"error": "PPTX file not found"}), 404
         
         # Load presentation
-        from pptx import Presentation as PptxPresentation
         prs = PptxPresentation(pptx_path)
         initial_slide_count = len(prs.slides)
         print(f"[AI INSERT] Initial slide count: {initial_slide_count}")
@@ -1051,23 +1059,14 @@ def insert_slide():
         after_add_count = len(prs.slides)
         print(f"[AI INSERT] After add_slide(): {after_add_count} slides (added {after_add_count - initial_slide_count})")
         
-        # Move the slide to the correct position (after insert_after)
-        # PowerPoint slides are 0-indexed in the API
-        # If insert_after=3 (1-based), we want to insert at index 3 (0-based), which is AFTER slide 3
-        # Example: [0, 1, 2, 3, 4] - insert at index 3 means new slide becomes index 3, old index 3 becomes 4
-        # NO! We want the new slide AFTER position 3, so it should be at index 4 in the final array
-        # Current slides: 0, 1, 2, 3(current), 4, 5
-        # After insert at position 4: 0, 1, 2, 3(current), 4(NEW), 5, 6
-        
         slides = list(prs.slides)
         new_slide = slides[-1]  # The slide we just added (at the end)
         
         print(f"[AI INSERT] Moving slide from end (index {len(slides)-1}) to position after slide {insert_after}")
         print(f"[AI INSERT] Current slides before move: {[f'Slide {i+1}' for i in range(len(slides))]}")
         
-        # insert_after is 1-based. To insert AFTER position N (1-based), we insert at index N (0-based)
-        # Example: insert_after=3 means "after slide 3", so new slide becomes slide 4, insert at index 3
-        target_index = insert_after  # This is correct: insert_after=3 (1-based) → index 3 (0-based) = position 4 (1-based)
+
+        target_index = insert_after 
         
         # Move slide by rearranging the XML
         xml_slides = prs.slides._sldIdLst
@@ -1098,17 +1097,47 @@ def insert_slide():
         new_slide_count = result["slide_count"]
         db.update_slide_metadata(presentation_id, slide_count=new_slide_count)
         
-        # TODO: Save to database - the user's input and the AI response
-        # db.add_question(
-        #     presentation_id=presentation_id,
-        #     question=user_input,
-        #     answer=slide_content,
-        #     slide_index=target_index + 1
-        # )
+        # needed to update the idx of the slides after inserting new ones, this will be a pain when checking the view sequence
+        # If we insert at position 5, all AI slides at position >= 5 need to be incremented
+        updated_slides = db.update_ai_slide_indices_after_insertion(presentation_id, target_index + 1)
+        if updated_slides:
+            print(f"[AI INSERT] Updated {len(updated_slides)} existing AI slide indices after position {target_index + 1}")
+            for slide in updated_slides:
+                print(f"  - AI slide {slide['id']} now at position {slide['slide_index']}")
+        
+        # Save AI-generated slide to database with user input
+        #for examples answer is None
+        # For questions answer contains the quiz answer
+        if question_type_format == "example":
+            answer = None
+            slide_content_to_save = slide_content
+        elif "[Question Result:]" in slide_content:
+            # Quiz with answer, split and save both parts
+            parts = slide_content.split("[Question Result:]", 1)
+            slide_content_to_save = parts[0].strip()
+            answer = parts[1].strip() if len(parts) > 1 else None
+        else:
+            # Quiz without explicit answer marker (shouldnt happen but geminy is dumb lately)
+            slide_content_to_save = question_part
+            answer = None
+        
+        db.add_ai_slide(
+            presentation_id=presentation_id,
+            slide_content=slide_content_to_save,
+            user_input=user_input,
+            answer=answer,
+            slide_index=target_index + 1
+        )
+        print(f"[AI INSERT] Saved AI slide to database at position {target_index + 1} (type: {question_type_format})")
+        print(f"[AI INSERT] Content length: {len(slide_content_to_save)}, Answer: {'Yes' if answer else 'None'}")
+        
+        # Add the slide index to the ai_generated_slide_indices array
+        db.add_ai_generated_slide(presentation_id, target_index + 1)
+        print(f"[AI INSERT] Added slide index {target_index + 1} to ai_generated_slide_indices")
         
         # Emit WebSocket event to notify frontend
         import time
-        cache_bust_token = int(time.time() * 1000)  # millisecond timestamp
+        cache_bust_token = int(time.time() * 1000)
         
         socketio.emit(
             "presentation:slides_updated",
@@ -1150,47 +1179,50 @@ def handle_send_message(data):
     emit("response", {"msg": f"Backend received: {data['msg']}"}, broadcast=True)
 
 
-@socketio.on("bot_message")
-def handle_bot_message(data):
-    """
-    Handle messages from the Telegram bot (need to complete it, it will be a pretty big func)
-    Expected data:
-    {
-        "telegram_chat_id": int,
-        "question": str,
-        "presentation_id": int,
-        "slide_index": int (optional)
-    }
-    """
-    print("Received from bot:", data)
+
+#not using this anymore, it was a placeholder for before
+# @socketio.on("bot_message")
+# def handle_bot_message(data):
+#     """
+#     Handle messages from the Telegram bot (need to complete it, it will be a pretty big func)
+#     Expected data:
+#     {
+#         "telegram_chat_id": int,
+#         "question": str,
+#         "presentation_id": int,
+#         "slide_index": int (optional)
+#     }
+#     """
+#     print("Received from bot:", data)
     
-    try:
-        # Get user from telegram chat ID
-        user = db.get_user_by_telegram_chat_id(data["telegram_chat_id"])
-        if not user:
-            emit("bot_response", {"error": "User not found"})
-            return
+#     try:
+#         # Get user from telegram chat ID
+#         user = db.get_user_by_telegram_chat_id(data["telegram_chat_id"])
+#         if not user:
+#             emit("bot_response", {"error": "User not found"})
+#             return
         
-        # simulated the ai ans, will add it ltr (or never xd, not using that endpoint anymore)
-        answer = f"AI response to: {data['question']}"
+#         # Simulated AI answer (legacy endpoint, not actively used)
+#         answer = f"AI response to: {data['question']}"
         
-        # Save the question and answer
-        if "presentation_id" in data:
-            db.add_question(
-                presentation_id=data["presentation_id"],
-                question=data["question"],
-                answer=answer,
-                slide_index=data.get("slide_index")
-            )
+#         # Save as AI slide if presentation_id provided
+#         if "presentation_id" in data:
+#             db.add_ai_slide(
+#                 presentation_id=data["presentation_id"],
+#                 slide_content=answer,
+#                 user_input=data["question"],
+#                 answer=None,  # Legacy endpoint, no specific answer
+#                 slide_index=data.get("slide_index")
+#             )
         
-        emit("bot_response", {
-            "answer": answer,
-            "user_id": user["id"]
-        })
+#         emit("bot_response", {
+#             "answer": answer,
+#             "user_id": user["id"]
+#         })
         
-    except Exception as e:
-        print(f"Error handling bot message: {e}")
-        emit("bot_response", {"error": str(e)})
+#     except Exception as e:
+#         print(f"Error handling bot message: {e}")
+#         emit("bot_response", {"error": str(e)})
 
 
 #wont use this now, will add it from another one of the funcs
