@@ -35,7 +35,7 @@ def generate_question_slide(api_key, presentation_content, user_input, slide_ind
             f"It should be a multiple choice question, and you should include the answer at the end, "
             f"separated from the question by this string [Question Result:]. "
             f"When answering, give the direct answer, be concise, and ensure the entire response "
-            f"fits in a single slide (ideally under 500 characters). "
+            f"fits in a single slide (ideally under 500 characters per question). "
             f"Use 4 options labeled A, B, C, D, each on its own line. The question should be above these alternatives, without anything before it. "
             f"The response must match the language used in the presentation slides I will give you. "
             f"Give me 3 different questions, each separated by [next]"
@@ -46,8 +46,8 @@ def generate_question_slide(api_key, presentation_content, user_input, slide_ind
             f"The quiz question must be appropriate for a class presentation. "
             f"It should be an open-ended question, and you should include the answer at the end, "
             f"separated from the question by this string [Question Result:]. "
-            f"When answering, give the direct answer, be concise, and ensure the entire response "
-            f"fits in a single slide (ideally under 500 characters, not considering the response). "
+            f"When answering, give the direct answer, be concise, and ensure the entire response, only include the question, without anything before it"
+            f"fits in a single slide (ideally under 500 characters per question, not considering the response). "
             f"The response must match the language used in the presentation slides I will give you. "
             f"Give me 3 different questions, each separated by [next]"
         )
@@ -85,12 +85,13 @@ def generate_example_slide(api_key, presentation_content, user_input, slide_inde
         user_input = "no user input"
 
         query_base = (
-            f"Please help me create examples based on the presentation I will give you, considering what the user asks. "
-            f"The examples must be appropriate for a class presentation and clearly illustrate the concept for students. "
-            f"When answering, give only the examples themselves without any numbering or titles. "
-            f"Be concise, and ensure the entire response fits in a single slide (ideally under 700 characters). "
-            f"Use the same language style as the presentation slides I provide. "
-            f"Give exactly 3 different examples, and separate each one using [next] with no extra text."
+            "You will receive a presentation and, optionally, a user request. "
+            "Your goal is to generate exactly 3 clear, concrete examples that help students understand the key concepts from the presentation. "
+            "If the user does not request anything specific, base the examples on the main topic or core concept of the presentation. "
+            "Each example must be self-contained, descriptive, and practical—not a question or definition. "
+            "Keep each example under 700 characters and write in the same tone and language style as the presentation slides. "
+            "Separate examples with [next], with no titles, numbering, or explanations. "
+            "Output only the examples."
         )
     query = query_base + "\nUser input:\n" + user_input + "\n\nPresentation content:\n" + query_data
     print(f"[AI] Generating example for slide {slide_index}")
