@@ -84,15 +84,15 @@ def generate_example_slide(api_key, presentation_content, user_input, slide_inde
     if not user_input or len(user_input) < 2:
         user_input = "no user input"
 
-        query_base = (
-            "You will receive a presentation and, optionally, a user request. "
-            "Your goal is to generate exactly 3 clear, concrete examples that help students understand the key concepts from the presentation. "
-            "If the user does not request anything specific, base the examples on the main topic or core concept of the presentation. "
-            "Each example must be self-contained, descriptive, and practical—not a question or definition. "
-            "Keep each example under 700 characters and write in the same tone and language style as the presentation slides. "
-            "Separate examples with [next], with no titles, numbering, or explanations. "
-            "Output only the examples."
-        )
+    query_base = (
+        "You will receive a presentation and, optionally, a user request. "
+        "Your goal is to generate exactly 3 clear, concrete examples that help students understand the key concepts from the presentation. "
+        "If the user does not request anything specific, base the examples on the main topic or core concept of the presentation. "
+        "Each example must be self-contained, descriptive, and practical—not a question or definition. "
+        "Keep each example under 700 characters and write in the same tone and language style as the presentation slides. "
+        "Separate examples with [next], with no titles, numbering, or explanations. "
+        "Output only the examples."
+    )
     query = query_base + "\nUser input:\n" + user_input + "\n\nPresentation content:\n" + query_data
     print(f"[AI] Generating example for slide {slide_index}")
     response=client.models.generate_content(model="gemini-2.0-flash-exp",contents=query)
