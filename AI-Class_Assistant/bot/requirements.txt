@@ -3,3 +3,5 @@ websockets
 python-dotenv
 python-socketio[asyncio_client]
 requests
+faster-whisper
+vosk
