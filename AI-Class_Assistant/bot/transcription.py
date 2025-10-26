@@ -1,13 +1,3 @@
-"""
-Utility module to transcribe Telegram voice notes into text.
-
-This module wraps the workflow shared by the user:
-1. Normalize any incoming audio to 16 kHz mono WAV via ffmpeg.
-2. Detect the spoken language with faster-whisper (tiny model by default).
-3. Select the appropriate Vosk acoustic model (ES/EN) and obtain the transcript.
-
-All heavy lifting lives in the bot service, so the backend only receives text.
-"""
 
 from __future__ import annotations
 
