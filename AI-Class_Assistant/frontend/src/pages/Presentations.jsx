@@ -21,9 +21,47 @@ function Presentations({ user }) {
   const [currentSlide, setCurrentSlide] = useState(1);
   const [totalSlides, setTotalSlides] = useState(0);
   const [imageVersion, setImageVersion] = useState(0); // forcing the pres to reload in place
+  const [presentationOrder, setPresentationOrder] = useState([]) //array of {slide: number, timestamp: number, duration: number}, the duration is only set after changing or ending
   
   const containerRef = useRef(null);
   const imageRef = useRef(null);
+  const slideStartTimeRef = useRef(null); //track when current slide started
+
+  // calculate time spent per slide (I calc it sepparately, then we add it up in the next func)
+  const recordSlideVisit = (slideNumber) => {
+    if (!presentationStarted) return; //this is the fix I did to the slide recording when not in fullscreen, need to test more
+    const now=Date.now();
+    const duration = slideStartTimeRef.current ? now - slideStartTimeRef.current : 0;
+    
+    setPresentationOrder(prevOrder => {
+      const newEntry = {
+        slide: slideNumber,
+        timestamp: now,
+        duration: duration
+      };
+      // console.log(`Recording slide visit: slide ${slideNumber}, duration: ${duration}ms`);
+      return [...prevOrder, newEntry];
+    });
+    
+    slideStartTimeRef.current = now;
+  };
+
+  // leaving this here to send the full data to the backend ltr
+  const calculateTimeStatistics = (slideOrder) => {
+    const timePerSlide = {};
+    slideOrder.forEach(entry => {
+      if (!timePerSlide[entry.slide]) {
+        timePerSlide[entry.slide] = 0;
+      }
+      timePerSlide[entry.slide] += entry.duration;
+    });
+    
+    return {
+      timePerSlide,
+      totalTime: Object.values(timePerSlide).reduce((sum, time) => sum + time, 0),
+      slideOrder
+    };
+  };
 
   useEffect(() => {
     const fetchAndConvertPresentation = async () => {
@@ -59,7 +97,7 @@ function Presentations({ user }) {
   // Keyboard navigation
   useEffect(() => {
     const handleKeyPress = (e) => {
-      if (!totalSlides) return;
+      if (!totalSlides) return; //fixing here, if the pres is not in full screen, I dont want to update the timer or slide order
 
       switch (e.key) {
         case 'ArrowRight':
@@ -67,22 +105,28 @@ function Presentations({ user }) {
         case ' ':
           e.preventDefault();
           if (currentSlide < totalSlides) {
-            setCurrentSlide(prev => prev + 1);
+            const nextSlide = currentSlide + 1;
+            recordSlideVisit(nextSlide);
+            setCurrentSlide(nextSlide);
           }
           break;
         case 'ArrowLeft':
         case 'ArrowUp':
           e.preventDefault();
           if (currentSlide > 1) {
-            setCurrentSlide(prev => prev - 1);
+            const prevSlide = currentSlide - 1;
+            recordSlideVisit(prevSlide);
+            setCurrentSlide(prevSlide);
           }
           break;
         case 'Home':
           e.preventDefault();
+          recordSlideVisit(1);
           setCurrentSlide(1);
           break;
         case 'End':
           e.preventDefault();
+          recordSlideVisit(totalSlides);
           setCurrentSlide(totalSlides);
           break;
         default:
@@ -92,7 +136,7 @@ function Presentations({ user }) {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [currentSlide, totalSlides]);
+  }, [currentSlide, totalSlides, presentationStarted]);
 
   // WebSocket slide updates
   useEffect(() => {
@@ -101,6 +145,7 @@ function Presentations({ user }) {
     const handleUpdate = ({ presentation_id, current_slide }) => {
       if (presentation_id === presentationId) {
         console.log(`WebSocket update: moving to slide ${current_slide}`);
+        recordSlideVisit(current_slide);
         setCurrentSlide(current_slide);
       }
     };
@@ -138,6 +183,17 @@ function Presentations({ user }) {
       
       await startPresentation(presentationId, telegramChatId, currentSlide);
       setPresentationStarted(true);
+      
+      //initialize tracking for first slide
+      const now = Date.now();
+      slideStartTimeRef.current = now;
+      setPresentationOrder([{
+        slide: currentSlide,
+        timestamp: now,
+        duration: 0
+      }]);
+      console.log(`Started tracking at slide ${currentSlide}`);
+      
       console.log("Presentation started successfully");
       
       //enter fullscreen mode
@@ -161,10 +217,54 @@ function Presentations({ user }) {
     if (!presentationId) return;
     
     try {
+      //record the final slide duration before ending
+      const now = Date.now();
+      const finalDuration = slideStartTimeRef.current ? now - slideStartTimeRef.current : 0;
+      
+      setPresentationOrder(prevOrder => {
+        const finalOrder = [...prevOrder];
+        if (finalOrder.length > 0) {
+          //update the last entry with its final duration
+          finalOrder[finalOrder.length - 1] = {
+            ...finalOrder[finalOrder.length - 1],
+            duration: finalDuration
+          };
+        }
+        
+        // calculate statistics (debugging, will comment)
+        // console.log("=== PRESENTATION STATISTICS ===");
+        // console.log("Full slide order:", finalOrder);
+        
+        // Calculate total time per slide
+        const timePerSlide = {};
+        finalOrder.forEach(entry => {
+          if (!timePerSlide[entry.slide]) {
+            timePerSlide[entry.slide] = 0;
+          }
+          timePerSlide[entry.slide] += entry.duration;
+        });
+        
+        // console.log("\nTime spent per slide (in seconds):");
+        // Object.entries(timePerSlide)
+        //   .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+        //   .forEach(([slide, duration]) => {
+        //     console.log(`  Slide ${slide}: ${(duration / 1000).toFixed(2)}s`);
+        //   });
+        
+        const totalTime = Object.values(timePerSlide).reduce((sum, time) => sum + time, 0);
+        // console.log(`\nTotal presentation time: ${(totalTime / 1000).toFixed(2)}s`);
+        // console.log("==============================\n");
+        
+        return finalOrder;
+      });
+      
       const telegramChatId = user?.telegram_chat_id || null;
       const result = await endPresentation(presentationId, telegramChatId);
       setPresentationStarted(false);
       console.log("Presentation ended. Duration:", result.duration_seconds, "seconds");
+      
+      //reset tracking
+      slideStartTimeRef.current = null;
       
       //exit fullscreen mode
       if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
@@ -189,9 +289,49 @@ function Presentations({ user }) {
         
         if (presentationStarted && presentationId) {
           try {
+            //same as before
+            const now = Date.now();
+            const finalDuration = slideStartTimeRef.current ? now - slideStartTimeRef.current : 0;
+            
+            setPresentationOrder(prevOrder => {
+              const finalOrder = [...prevOrder];
+              if (finalOrder.length > 0) {
+                finalOrder[finalOrder.length - 1] = {
+                  ...finalOrder[finalOrder.length - 1],
+                  duration: finalDuration
+                };
+              }
+              
+              console.log("=== PRESENTATION STATISTICS (Auto-ended) ===");
+              console.log("Full slide order:", finalOrder);
+              
+              // Calculate total time per slide
+              const timePerSlide = {};
+              finalOrder.forEach(entry => {
+                if (!timePerSlide[entry.slide]) {
+                  timePerSlide[entry.slide] = 0;
+                }
+                timePerSlide[entry.slide] += entry.duration;
+              });
+              
+              console.log("\nTime spent per slide (in seconds):");
+              Object.entries(timePerSlide)
+                .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
+                .forEach(([slide, duration]) => {
+                  console.log(`  Slide ${slide}: ${(duration / 1000).toFixed(2)}s`);
+                });
+              
+              const totalTime = Object.values(timePerSlide).reduce((sum, time) => sum + time, 0);
+              console.log(`\nTotal presentation time: ${(totalTime / 1000).toFixed(2)}s`);
+              console.log("==============================\n");
+              
+              return finalOrder;
+            });
+            
             const telegramChatId = user?.telegram_chat_id || null;
             const result = await endPresentation(presentationId, telegramChatId);
             setPresentationStarted(false);
+            slideStartTimeRef.current = null;
             console.log("Presentation auto-ended. Duration:", result.duration_seconds, "seconds");
           } catch (err) {
             console.error("Error auto-ending presentation:", err);
@@ -213,13 +353,17 @@ function Presentations({ user }) {
 
   const goToNextSlide = () => {
     if (currentSlide < totalSlides) {
-      setCurrentSlide(prev => prev + 1);
+      const nextSlide = currentSlide + 1;
+      recordSlideVisit(nextSlide);
+      setCurrentSlide(nextSlide);
     }
   };
 
   const goToPrevSlide = () => {
     if (currentSlide > 1) {
-      setCurrentSlide(prev => prev - 1);
+      const prevSlide = currentSlide - 1;
+      recordSlideVisit(prevSlide);
+      setCurrentSlide(prevSlide);
     }
   };
 
