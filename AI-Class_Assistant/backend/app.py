@@ -8,6 +8,11 @@ from pptx_utils import extract_text_from_pptx, convert_pptx_to_pdf, get_slide_co
 from ai_utils import generate_question_slide, generate_example_slide, read_presentation, add_slide
 import shutil
 from pptx import Presentation as PptxPresentation #only using it as fallback
+import traceback
+import random
+import string
+from datetime import datetime, timedelta
+import time
 
 load_dotenv()
 
@@ -79,11 +84,7 @@ def create_user():
 def generate_link_code(user_id):
     """Generate a one-time code for Telegram linking"""
     try:
-        import random
-        import string
-        from datetime import datetime, timedelta
-        
-        # Generate a 6-character code
+        # generate a 6-character code
         code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
         expires_at = datetime.now() + timedelta(minutes=15)  # Valid for 15 minutes
         
@@ -245,7 +246,6 @@ def delete_class_endpoint(class_id):
 
     except Exception as e:
         print(f"[DELETE] Exception: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -303,7 +303,6 @@ def create_presentation(class_id):
         
         # Verify it's a valid PPTX
         try:
-            from pptx import Presentation as PptxPresentation
             test_prs = PptxPresentation(save_path)
             slide_count = len(test_prs.slides)
             print(f"[UPLOAD] Valid PPTX with {slide_count} slides")
@@ -406,7 +405,6 @@ def reset_presentation(class_id):
         print(f"[RESET] Regenerated {result['slide_count']} slide images")
         
         #socket event to notify frontend
-        import time
         cache_bust_token = int(time.time() * 1000)
         
         socketio.emit(
@@ -431,7 +429,6 @@ def reset_presentation(class_id):
 
     except Exception as e:
         print("Error resetting PPTX:", e)
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -690,7 +687,6 @@ def convert_presentation_to_images_endpoint(presentation_id):
         ]
         
         # Emit WebSocket event to notify frontend of updated slides
-        import time
         cache_bust_token = int(time.time() * 1000)
         
         socketio.emit(
@@ -798,7 +794,6 @@ def download_presentation(class_id):
         )
     except Exception as e:
         print(f"Error downloading presentation: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -819,7 +814,7 @@ def create_example():
         presentation_id = data.get("presentation_id")
         slide_number = data.get("slide_number")
         telegram_chat_id = data.get("telegram_chat_id")
-        user_input = data.get("user_input", "")  # Text description or transcribed voice
+        user_input = data.get("user_input", "")  #text description or transcribed voice (the transcript is done in the bot btw)
         input_type = data.get("input_type", "text")  # "text" or "audio"
         voice_file_id = data.get("voice_file_id")  # Telegram file_id for voice messages
         
@@ -863,7 +858,6 @@ def create_example():
         
     except Exception as e:
         print(f"Error creating example: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -923,7 +917,6 @@ def create_quiz():
         
     except Exception as e:
         print(f"Error creating quiz: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -946,7 +939,6 @@ def create_quiz_alternatives():
         
         print(f"AI: Creating quiz with alternatives for presentation {presentation_id}, slide {slide_number}")
         
-        # Get presentation info
         presentation = db.get_presentation_by_id(presentation_id)
         if not presentation:
             return jsonify({"error": "Presentation not found"}), 404
@@ -955,7 +947,7 @@ def create_quiz_alternatives():
         if not pptx_path or not os.path.exists(pptx_path):
             return jsonify({"error": "PPTX file not found"}), 404
         
-        # Read presentation content
+        #read presentation content
         prs, content = read_presentation(pptx_path)
         
         # Generate multiple choice questions using AI
@@ -983,7 +975,6 @@ def create_quiz_alternatives():
         
     except Exception as e:
         print(f"Error creating quiz with alternatives: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -992,7 +983,7 @@ def create_quiz_alternatives():
 def insert_slide():
     """
     Insert the selected AI-generated slide into the presentation
-    This is called after the user chooses one of the 3 options
+    This is called after the user chooses one of the 3 options, here I am adding all of the new slides logic, so it also has db code
     
     Expected payload:
     {
@@ -1087,7 +1078,7 @@ def insert_slide():
         verify_count = len(prs_verify.slides)
         print(f"[AI INSERT] Verification: Reloaded PPTX has {verify_count} slides")
         
-        # Convert to images - FORCE REGENERATION since we added a new slide
+        # Convert to images - FORCE REGENERATION since we added a new slide (this aint working in W10 and idk why ffs)
         output_dir = "./slides"
         print(f"[AI INSERT] Converting PPTX to images (force_regenerate=True)...")
         result = convert_pptx_to_images(pptx_path, output_dir, presentation_id, force_regenerate=True)
@@ -1136,7 +1127,6 @@ def insert_slide():
         print(f"[AI INSERT] Added slide index {target_index + 1} to ai_generated_slide_indices")
         
         # Emit WebSocket event to notify frontend
-        import time
         cache_bust_token = int(time.time() * 1000)
         
         socketio.emit(
@@ -1160,7 +1150,6 @@ def insert_slide():
         
     except Exception as e:
         print(f"Error inserting slide: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 

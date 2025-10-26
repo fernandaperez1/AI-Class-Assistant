@@ -111,13 +111,12 @@ async def extract_user_input_from_message(
 
 
 def build_transcription_preview(result: TranscriptionResult) -> str:
-    """Return a friendly summary showing detected language and snippet."""
     snippet = result.text.strip()
     if len(snippet) > 400:
         snippet = snippet[:400] + "..."
     lang = result.language.upper() if result.language else "?"
     confidence = f"{result.confidence:.2f}"
-    return f"🎙️ Entendí ({lang}, conf {confidence}):\n{snippet}"
+    return f"Audio transcription (language={lang}, confidence={confidence}):\n{snippet}"
 
 sio = socketio.AsyncClient()
 
@@ -751,7 +750,7 @@ async def handle_ai_create_example(query, presentation_id: int):
         f"*Create Example (Slide {current_slide})*\n\n"
         "Please provide context for the example you want:\n\n"
         "• Send a text message describing what you want\n"
-        "  Example: \"make an example about ECG calculation\"\n\n"
+        "  Example: \"make an example about mitochondria\"\n\n"
         "• OR send a voice message with your request\n\n"
         "• OR type `/skip` for no specific context\n\n"
         "I'll generate 3 examples based on the presentation content."
@@ -1220,7 +1219,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 user_input, input_type, transcription = await extract_user_input_from_message(update)
             except TranscriptionError as exc:
-                await update.message.reply_text(f"🎙️ No pude transcribir tu audio: {exc}")
+                await update.message.reply_text(f"Could not transcribe the audio message: {exc}")
                 return
 
             if not user_input:
@@ -1327,7 +1326,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:
                 user_input, input_type, transcription = await extract_user_input_from_message(update)
             except TranscriptionError as exc:
-                await update.message.reply_text(f"🎙️ No pude transcribir tu audio: {exc}")
+                await update.message.reply_text(f"Could not transcribe the audio: {exc}")
                 return
             
             if not user_input:
@@ -1387,9 +1386,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     message = (
                         f"*{title_prefix} for Slide {slide}*\n\n"
                         "*Generated 3 options. Choose one to add to your presentation:*\n\n"
-                        f"*Option 1:*\n{options[0][:300]}{'...' if len(options[0]) > 300 else ''}\n\n"
-                        f"*Option 2:*\n{options[1][:300]}{'...' if len(options[1]) > 300 else ''}\n\n"
-                        f"*Option 3:*\n{options[2][:300]}{'...' if len(options[2]) > 300 else ''}\n\n"
+                        f"*Option 1:*\n{options[0][:500]}{'...' if len(options[0]) > 500 else ''}\n\n"
+                        f"*Option 2:*\n{options[1][:500]}{'...' if len(options[1]) > 500 else ''}\n\n"
+                        f"*Option 3:*\n{options[2][:500]}{'...' if len(options[2]) > 500 else ''}\n\n"
                     )
                     
                     user_states[chat_id] = {
