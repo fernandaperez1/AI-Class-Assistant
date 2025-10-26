@@ -9,6 +9,7 @@ import {
   startPresentation,
   endPresentation 
 } from "../services/presentations";
+import { API_URL } from "../config";
 
 function Presentations({ user }) {
   const { classId } = useParams();
@@ -21,9 +22,74 @@ function Presentations({ user }) {
   const [currentSlide, setCurrentSlide] = useState(1);
   const [totalSlides, setTotalSlides] = useState(0);
   const [imageVersion, setImageVersion] = useState(0); // forcing the pres to reload in place
+  const [presentationOrder, setPresentationOrder] = useState([]) //array of {slide: number, timestamp: number, duration: number}, the duration is only set after changing or ending
   
   const containerRef = useRef(null);
   const imageRef = useRef(null);
+  const slideStartTimeRef = useRef(null); //track when current slide started
+
+  // calculate time spent per slide (I calc it sepparately, then we add it up in the next func)
+  const recordSlideVisit = (slideNumber) => {
+    if (!presentationStarted) return; //this is the fix I did to the slide recording when not in fullscreen, need to test more
+    const now=Date.now();
+    const duration = slideStartTimeRef.current ? now - slideStartTimeRef.current : 0;
+    
+    setPresentationOrder(prevOrder => {
+      const newEntry = {
+        slide: slideNumber,
+        timestamp: now,
+        duration: duration
+      };
+      // console.log(`Recording slide visit: slide ${slideNumber}, duration: ${duration}ms`);
+      return [...prevOrder, newEntry];
+    });
+    
+    slideStartTimeRef.current = now;
+  };
+
+  //calc the time stats
+  const calculateTimeStatistics = (slideOrder) => {
+    const timePerSlide = {};
+    slideOrder.forEach(entry => {
+      if (!timePerSlide[entry.slide]) {
+        timePerSlide[entry.slide] = 0;
+      }
+      timePerSlide[entry.slide] += entry.duration;
+    });
+    
+    return {
+      timePerSlide,
+      totalTime: Object.values(timePerSlide).reduce((sum, time) => sum + time, 0),
+      slideOrder
+    };
+  };
+
+  //save analythics to the db
+  const saveAnalytics = async (finalOrder) => {
+    if (!presentationId || finalOrder.length === 0) return;
+    
+    const stats = calculateTimeStatistics(finalOrder);
+    
+    try {
+      const response = await fetch(`${API_URL}/api/presentations/${presentationId}/analytics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slide_order: stats.slideOrder,
+          time_per_slide: stats.timePerSlide,
+          total_time_ms: stats.totalTime
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to save analytics');
+      }
+      
+      console.log('[ANALYTICS] Successfully saved presentation analytics');
+    } catch (err) {
+      console.error('[ANALYTICS] Error saving analytics:', err);
+    }
+  };
 
   useEffect(() => {
     const fetchAndConvertPresentation = async () => {
@@ -59,7 +125,7 @@ function Presentations({ user }) {
   // Keyboard navigation
   useEffect(() => {
     const handleKeyPress = (e) => {
-      if (!totalSlides) return;
+      if (!totalSlides) return; //fixing here, if the pres is not in full screen, I dont want to update the timer or slide order
 
       switch (e.key) {
         case 'ArrowRight':
@@ -67,22 +133,28 @@ function Presentations({ user }) {
         case ' ':
           e.preventDefault();
           if (currentSlide < totalSlides) {
-            setCurrentSlide(prev => prev + 1);
+            const nextSlide = currentSlide + 1;
+            recordSlideVisit(nextSlide);
+            setCurrentSlide(nextSlide);
           }
           break;
         case 'ArrowLeft':
         case 'ArrowUp':
           e.preventDefault();
           if (currentSlide > 1) {
-            setCurrentSlide(prev => prev - 1);
+            const prevSlide = currentSlide - 1;
+            recordSlideVisit(prevSlide);
+            setCurrentSlide(prevSlide);
           }
           break;
         case 'Home':
           e.preventDefault();
+          recordSlideVisit(1);
           setCurrentSlide(1);
           break;
         case 'End':
           e.preventDefault();
+          recordSlideVisit(totalSlides);
           setCurrentSlide(totalSlides);
           break;
         default:
@@ -92,7 +164,7 @@ function Presentations({ user }) {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [currentSlide, totalSlides]);
+  }, [currentSlide, totalSlides, presentationStarted]);
 
   // WebSocket slide updates
   useEffect(() => {
@@ -101,16 +173,40 @@ function Presentations({ user }) {
     const handleUpdate = ({ presentation_id, current_slide }) => {
       if (presentation_id === presentationId) {
         console.log(`WebSocket update: moving to slide ${current_slide}`);
+        recordSlideVisit(current_slide);
         setCurrentSlide(current_slide);
       }
     };
 
-    const handleSlideAdded = ({ presentation_id, new_slide_count, cache_bust }) => {
+    const handleSlideAdded = ({ presentation_id, new_slide_count, inserted_at, cache_bust }) => {
       if (presentation_id === presentationId) {
-        console.log(`Slides added! New count: ${new_slide_count}, cache_bust: ${cache_bust}`);
+        console.log(`Slides added! New count: ${new_slide_count}, inserted at: ${inserted_at}, cache_bust: ${cache_bust}`);
+        
         setTotalSlides(new_slide_count);
-        // changed the cache I had cz the images would not refresh, the cache bust is the time it will stay
         setImageVersion(cache_bust || Date.now());
+        
+        //iIf a slide was inserted before or at the current position, adjust current slide (so tha tthe order makes sense then)
+        if (inserted_at && inserted_at <= currentSlide) {
+          const newCurrentSlide = currentSlide + 1;
+          console.log(`Adjusting current slide from ${currentSlide} to ${newCurrentSlide} due to insertion at ${inserted_at}`);
+          setCurrentSlide(newCurrentSlide);
+          
+          if (presentationStarted) {
+            recordSlideVisit(newCurrentSlide);
+          }
+        }
+
+        setPresentationOrder(prevOrder => {
+          return prevOrder.map(entry => {
+            if (entry.slide >= inserted_at) {
+              return {
+                ...entry,
+                slide: entry.slide + 1
+              };
+            }
+            return entry;
+          });
+        });
       }
     };
 
@@ -121,7 +217,7 @@ function Presentations({ user }) {
       socket.off("presentation:update", handleUpdate);
       socket.off("presentation:slides_updated", handleSlideAdded);
     };
-  }, [presentationId]);
+  }, [presentationId, presentationStarted, currentSlide]);
 
   const handleStartPresentation = async () => {
     if (!presentationId) return;
@@ -138,6 +234,17 @@ function Presentations({ user }) {
       
       await startPresentation(presentationId, telegramChatId, currentSlide);
       setPresentationStarted(true);
+      
+      //initialize tracking for first slide
+      const now = Date.now();
+      slideStartTimeRef.current = now;
+      setPresentationOrder([{
+        slide: currentSlide,
+        timestamp: now,
+        duration: 0
+      }]);
+      console.log(`Started tracking at slide ${currentSlide}`);
+      
       console.log("Presentation started successfully");
       
       //enter fullscreen mode
@@ -161,10 +268,35 @@ function Presentations({ user }) {
     if (!presentationId) return;
     
     try {
+      //record the final slide duration before ending
+      const now = Date.now();
+      const finalDuration = slideStartTimeRef.current ? now - slideStartTimeRef.current : 0;
+      
+      //calculate final order taking into consideration the race condition before state update (fk use state)
+      const finalOrder = presentationOrder.map((entry, index) => {
+        //update the last entry with its final duration
+        if (index === presentationOrder.length - 1) {
+          return {
+            ...entry,
+            duration: finalDuration
+          };
+        }
+        return entry;
+      });
+      
+      console.log("Final order to save:", finalOrder);
+      
+      //save analytics to backend
+      await saveAnalytics(finalOrder);
+      
       const telegramChatId = user?.telegram_chat_id || null;
       const result = await endPresentation(presentationId, telegramChatId);
       setPresentationStarted(false);
       console.log("Presentation ended. Duration:", result.duration_seconds, "seconds");
+      
+      //reset tracking
+      slideStartTimeRef.current = null;
+      setPresentationOrder([]);
       
       //exit fullscreen mode
       if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
@@ -189,9 +321,29 @@ function Presentations({ user }) {
         
         if (presentationStarted && presentationId) {
           try {
+            const now = Date.now();
+            const finalDuration = slideStartTimeRef.current ? now - slideStartTimeRef.current : 0;
+            
+            // same shit
+            const finalOrder = presentationOrder.map((entry, index) => {
+              if (index === presentationOrder.length - 1) {
+                return {
+                  ...entry,
+                  duration: finalDuration
+                };
+              }
+              return entry;
+            });
+            
+            console.log("Final order to save (auto-end):", finalOrder);
+
+            await saveAnalytics(finalOrder);
+            
             const telegramChatId = user?.telegram_chat_id || null;
             const result = await endPresentation(presentationId, telegramChatId);
             setPresentationStarted(false);
+            slideStartTimeRef.current = null;
+            setPresentationOrder([]);
             console.log("Presentation auto-ended. Duration:", result.duration_seconds, "seconds");
           } catch (err) {
             console.error("Error auto-ending presentation:", err);
@@ -209,17 +361,21 @@ function Presentations({ user }) {
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
       document.removeEventListener('msfullscreenchange', handleFullscreenChange);
     };
-  }, [presentationStarted, presentationId, user]);
+  }, [presentationStarted, presentationId, user, presentationOrder]);
 
   const goToNextSlide = () => {
     if (currentSlide < totalSlides) {
-      setCurrentSlide(prev => prev + 1);
+      const nextSlide = currentSlide + 1;
+      recordSlideVisit(nextSlide);
+      setCurrentSlide(nextSlide);
     }
   };
 
   const goToPrevSlide = () => {
     if (currentSlide > 1) {
-      setCurrentSlide(prev => prev - 1);
+      const prevSlide = currentSlide - 1;
+      recordSlideVisit(prevSlide);
+      setCurrentSlide(prevSlide);
     }
   };
 

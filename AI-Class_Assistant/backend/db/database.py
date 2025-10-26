@@ -345,6 +345,22 @@ def add_ai_generated_slide(presentation_id, slide_index):
         return dict(result) if result else None
 
 
+def reset_ai_generated_slide_indices(presentation_id):
+    """Reset the ai_generated_slide_indices array (used when resetting presentation)"""
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            UPDATE presentations
+            SET ai_generated_slide_indices = ARRAY[]::INTEGER[]
+            WHERE id = %s
+            RETURNING id, ai_generated_slide_indices
+            """,
+            (presentation_id,)
+        )
+        result = cursor.fetchone()
+        return dict(result) if result else None
+
+
 def start_presentation(presentation_id):
     """Mark presentation as started"""
     with get_db_cursor() as cursor:
@@ -378,35 +394,96 @@ def end_presentation(presentation_id):
         return dict(result) if result else None
 
 
-# Question operations
-def add_question(presentation_id, question, answer, slide_index=None):
-    """Add a question and answer to a presentation"""
+# AI Slide operations
+def add_ai_slide(presentation_id, slide_content, user_input, answer=None, slide_index=None):
+    """Add an AI-generated slide (example or question) to a presentation"""
     with get_db_cursor() as cursor:
         cursor.execute(
             """
-            INSERT INTO presentation_questions 
-            (presentation_id, question, answer, slide_index)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id, presentation_id, question, answer, slide_index, asked_at
+            INSERT INTO presentation_AI_slide 
+            (presentation_id, slide_content, user_input, answer, slide_index)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id, presentation_id, slide_content, user_input, answer, slide_index, created_at
             """,
-            (presentation_id, question, answer, slide_index)
+            (presentation_id, slide_content, user_input, answer, slide_index)
         )
         return dict(cursor.fetchone())
 
 
-def get_presentation_questions(presentation_id):
-    """Get all questions for a presentation"""
+def get_presentation_ai_slides(presentation_id):
+    """Get all AI-generated slides for a presentation"""
     with get_db_cursor() as cursor:
         cursor.execute(
             """
-            SELECT id, presentation_id, question, answer, slide_index, asked_at
-            FROM presentation_questions
+            SELECT id, presentation_id, slide_content, user_input, answer, slide_index, created_at
+            FROM presentation_AI_slide
             WHERE presentation_id = %s
-            ORDER BY asked_at ASC
+            ORDER BY created_at ASC
             """,
             (presentation_id,)
         )
         return [dict(row) for row in cursor.fetchall()]
+
+
+def delete_presentation_ai_slides(presentation_id):
+    """Delete all AI-generated slides for a presentation (used when resetting)"""
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            DELETE FROM presentation_AI_slide
+            WHERE presentation_id = %s
+            RETURNING id
+            """,
+            (presentation_id,)
+        )
+        deleted_rows = cursor.fetchall()
+        return len(deleted_rows)
+
+
+def update_ai_slide_indices_after_insertion(presentation_id, inserted_at_index):
+    """
+    Update slide indices for AI slides that come after the newly inserted slide.
+    When a slide is inserted at position N, all AI slides at position >= N need to be incremented.
+    Also updates the ai_generated_slide_indices array in the presentations table.
+    """
+    with get_db_cursor() as cursor:
+        #get the current ai_generated_slide_indices array
+        cursor.execute(
+            """
+            SELECT ai_generated_slide_indices
+            FROM presentations
+            WHERE id = %s
+            """,
+            (presentation_id,)
+        )
+        result = cursor.fetchone()
+        current_indices = result['ai_generated_slide_indices'] if result else []
+        
+        # Update the indices, increment any index >= inserted_at_index
+        updated_indices = [idx + 1 if idx >= inserted_at_index else idx for idx in current_indices]
+        
+        # Update the array in the presentations table
+        cursor.execute(
+            """
+            UPDATE presentations
+            SET ai_generated_slide_indices = %s
+            WHERE id = %s
+            """,
+            (updated_indices, presentation_id)
+        )
+        
+        # Update slide_index in presentation_AI_slide table
+        cursor.execute(
+            """
+            UPDATE presentation_AI_slide
+            SET slide_index = slide_index + 1
+            WHERE presentation_id = %s AND slide_index >= %s
+            RETURNING id, slide_index
+            """,
+            (presentation_id, inserted_at_index)
+        )
+        updated_rows = cursor.fetchall()
+        return [dict(row) for row in updated_rows]
 
 
 def get_active_presentation_for_user(user_id: int):
@@ -487,3 +564,52 @@ def update_slide_metadata(presentation_id: int, *, current_slide: int | None = N
         cursor.execute(query, tuple(values))
         row = cursor.fetchone()
         return dict(row) if row else None
+
+
+# analytics stuff ------------------------------------------------------------------------------------------------
+def save_presentation_analytics(presentation_id, slide_order, time_per_slide, total_time_ms):
+    """Save presentation analytics data"""
+    import json
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO presentation_analytics 
+            (presentation_id, slide_order, time_per_slide, total_time_ms)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, presentation_id, slide_order, time_per_slide, total_time_ms, created_at
+            """,
+            (presentation_id, json.dumps(slide_order), json.dumps(time_per_slide), total_time_ms)
+        )
+        return dict(cursor.fetchone())
+
+
+def get_presentation_analytics(presentation_id):
+    """Get all analytics entries for a presentation (ordered by most recent first)"""
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, presentation_id, slide_order, time_per_slide, total_time_ms, created_at
+            FROM presentation_analytics
+            WHERE presentation_id = %s
+            ORDER BY created_at DESC
+            """,
+            (presentation_id,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_latest_presentation_analytics(presentation_id):
+    """Get the most recent analytics entry for a presentation"""
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, presentation_id, slide_order, time_per_slide, total_time_ms, created_at
+            FROM presentation_analytics
+            WHERE presentation_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (presentation_id,)
+        )
+        result = cursor.fetchone()
+        return dict(result) if result else None

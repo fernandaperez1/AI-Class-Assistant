@@ -25,9 +25,10 @@ This folder contains the database initialization and reset scripts for the Class
    - Stores presentation data for each class
    - Fields: `id`, `class_id`, `original_pptx_path`, `ai_generated_slide_indices`, `duration_seconds`, `started_at`, `ended_at`
 
-4. **`presentation_questions`**
-   - Stores questions asked during presentations and their AI-generated answers
-   - Fields: `id`, `presentation_id`, `question`, `answer`, `asked_at`, `slide_index`
+4. **`presentation_AI_slide`**
+   - Stores AI-generated slides (examples and questions) created during presentations
+   - Fields: `id`, `presentation_id`, `slide_content`, `user_input`, `answer` (optional), `slide_index`, `created_at`
+   - The `answer` field is optional - it's NULL for examples and contains the quiz answer for questions
 
 ## Usage
 

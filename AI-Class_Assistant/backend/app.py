@@ -8,6 +8,11 @@ from pptx_utils import extract_text_from_pptx, convert_pptx_to_pdf, get_slide_co
 from ai_utils import generate_question_slide, generate_example_slide, read_presentation, add_slide
 import shutil
 from pptx import Presentation as PptxPresentation #only using it as fallback
+import traceback
+import random
+import string
+from datetime import datetime, timedelta
+import time
 
 load_dotenv()
 
@@ -79,11 +84,7 @@ def create_user():
 def generate_link_code(user_id):
     """Generate a one-time code for Telegram linking"""
     try:
-        import random
-        import string
-        from datetime import datetime, timedelta
-        
-        # Generate a 6-character code
+        # generate a 6-character code
         code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
         expires_at = datetime.now() + timedelta(minutes=15)  # Valid for 15 minutes
         
@@ -245,7 +246,6 @@ def delete_class_endpoint(class_id):
 
     except Exception as e:
         print(f"[DELETE] Exception: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -303,7 +303,6 @@ def create_presentation(class_id):
         
         # Verify it's a valid PPTX
         try:
-            from pptx import Presentation as PptxPresentation
             test_prs = PptxPresentation(save_path)
             slide_count = len(test_prs.slides)
             print(f"[UPLOAD] Valid PPTX with {slide_count} slides")
@@ -379,6 +378,14 @@ def reset_presentation(class_id):
         #Update slide count in database
         db.update_slide_metadata(presentation_id,slide_count=reset_slide_count)
         
+        # Delete all AI-generated slides from database since we're resetting to original
+        deleted_count = db.delete_presentation_ai_slides(presentation_id)
+        print(f"[RESET] Deleted {deleted_count} AI slides from database")
+        
+        # Reset the ai_generated_slide_indices array
+        db.reset_ai_generated_slide_indices(presentation_id)
+        print(f"[RESET] Reset ai_generated_slide_indices array")
+        
         # Delete old slide images directory
         image_dir = f"./slides/presentation_{presentation_id}_images"
         if os.path.exists(image_dir):
@@ -398,7 +405,6 @@ def reset_presentation(class_id):
         print(f"[RESET] Regenerated {result['slide_count']} slide images")
         
         #socket event to notify frontend
-        import time
         cache_bust_token = int(time.time() * 1000)
         
         socketio.emit(
@@ -423,7 +429,6 @@ def reset_presentation(class_id):
 
     except Exception as e:
         print("Error resetting PPTX:", e)
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -509,6 +514,42 @@ def end_presentation(presentation_id):
         return jsonify({"error": str(e)}), 500
     
 
+@app.route("/api/presentations/<int:presentation_id>/analytics", methods=["POST"])
+def save_analytics(presentation_id):
+    """Save presentation analytics data"""
+    try:
+        data = request.json
+        slide_order = data.get("slide_order", [])
+        time_per_slide = data.get("time_per_slide", {})
+        total_time_ms = data.get("total_time_ms", 0)
+        
+        print(f"[ANALYTICS] Saving analytics for presentation {presentation_id}")
+        print(f"[ANALYTICS] Total slides visited:{len(slide_order)}")
+        print(f"[ANALYTICS] Total time:{total_time_ms}ms ({total_time_ms/1000:.2f}s)")
+        
+        result = db.save_presentation_analytics(
+            presentation_id=presentation_id,
+            slide_order=slide_order,
+            time_per_slide=time_per_slide,
+            total_time_ms=total_time_ms
+        )
+        
+        return jsonify(result), 201
+    except Exception as e:
+        print(f"[ANALYTICS] Error saving analytics: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/presentations/<int:presentation_id>/analytics", methods=["GET"])
+def get_analytics(presentation_id):
+    """Get presentation analytics data (using this for the info tab only)"""
+    try:
+        analytics = db.get_presentation_analytics(presentation_id)
+        return jsonify(analytics), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/presentations/<int:presentation_id>/control", methods=["POST"])
 def control_presentation(presentation_id):
     """
@@ -562,28 +603,29 @@ def control_presentation(presentation_id):
 
 
 
-@app.route("/api/presentations/<int:presentation_id>/questions", methods=["POST"])
-def add_question(presentation_id):
-    """Add a question and answer to a presentation"""
+@app.route("/api/presentations/<int:presentation_id>/ai-slides", methods=["POST"])
+def add_ai_slide_endpoint(presentation_id):
+    """Add an AI-generated slide (example or question) to a presentation"""
     try:
         data = request.json
-        question = db.add_question(
+        ai_slide = db.add_ai_slide(
             presentation_id=presentation_id,
-            question=data["question"],
-            answer=data["answer"],
+            slide_content=data["slide_content"],
+            user_input=data["user_input"],
+            answer=data.get("answer"),  # Optional for examples
             slide_index=data.get("slide_index")
         )
-        return jsonify(question), 201
+        return jsonify(ai_slide), 201
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/presentations/<int:presentation_id>/questions", methods=["GET"])
-def get_questions(presentation_id):
-    """Get all questions for a presentation"""
+@app.route("/api/presentations/<int:presentation_id>/ai-slides", methods=["GET"])
+def get_ai_slides(presentation_id):
+    """Get all AI-generated slides for a presentation"""
     try:
-        questions = db.get_presentation_questions(presentation_id)
-        return jsonify(questions), 200
+        ai_slides = db.get_presentation_ai_slides(presentation_id)
+        return jsonify(ai_slides), 200
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -681,7 +723,6 @@ def convert_presentation_to_images_endpoint(presentation_id):
         ]
         
         # Emit WebSocket event to notify frontend of updated slides
-        import time
         cache_bust_token = int(time.time() * 1000)
         
         socketio.emit(
@@ -737,7 +778,7 @@ def serve_slide_image(presentation_id, slide_number):
 
 @app.route("/api/classes/<int:class_id>/presentation-info", methods=["GET"])
 def get_presentation_info(class_id):
-    """Get presentation information including slide count and availability, gotta complete this for the last deliverable, cz its unfinished"""
+    """Get presentation information including slide count, availability, and analytics, its all meshed into one func, should split"""
     try:
         presentation = db.get_presentation_by_class_id(class_id)
         if not presentation:
@@ -748,6 +789,9 @@ def get_presentation_info(class_id):
             return jsonify({"error": "PPTX file not found"}), 404
         
         slide_count = get_slide_count(pptx_path)
+
+        analytics = db.get_latest_presentation_analytics(presentation["id"])
+        ai_slides = db.get_presentation_ai_slides(presentation["id"])
         
         return jsonify({
             "presentation_id": presentation["id"],
@@ -756,7 +800,11 @@ def get_presentation_info(class_id):
             "pptx_path": pptx_path,
             "started_at": presentation.get("started_at"),
             "ended_at": presentation.get("ended_at"),
-            "duration_seconds": presentation.get("duration_seconds")
+            "duration_seconds": presentation.get("duration_seconds"),
+            "ai_generated_slide_indices": presentation.get("ai_generated_slide_indices", []),
+            "ai_slides_count": len(ai_slides),
+            "ai_slides": ai_slides,
+            "analytics": analytics
         }), 200
     except Exception as e:
         print(f"Error getting presentation info: {e}")
@@ -789,7 +837,6 @@ def download_presentation(class_id):
         )
     except Exception as e:
         print(f"Error downloading presentation: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -810,7 +857,7 @@ def create_example():
         presentation_id = data.get("presentation_id")
         slide_number = data.get("slide_number")
         telegram_chat_id = data.get("telegram_chat_id")
-        user_input = data.get("user_input", "")  # Text description or transcribed voice
+        user_input = data.get("user_input", "")  #text description or transcribed voice (the transcript is done in the bot btw)
         input_type = data.get("input_type", "text")  # "text" or "audio"
         voice_file_id = data.get("voice_file_id")  # Telegram file_id for voice messages
         
@@ -854,7 +901,6 @@ def create_example():
         
     except Exception as e:
         print(f"Error creating example: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -914,7 +960,6 @@ def create_quiz():
         
     except Exception as e:
         print(f"Error creating quiz: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -937,7 +982,6 @@ def create_quiz_alternatives():
         
         print(f"AI: Creating quiz with alternatives for presentation {presentation_id}, slide {slide_number}")
         
-        # Get presentation info
         presentation = db.get_presentation_by_id(presentation_id)
         if not presentation:
             return jsonify({"error": "Presentation not found"}), 404
@@ -946,7 +990,7 @@ def create_quiz_alternatives():
         if not pptx_path or not os.path.exists(pptx_path):
             return jsonify({"error": "PPTX file not found"}), 404
         
-        # Read presentation content
+        #read presentation content
         prs, content = read_presentation(pptx_path)
         
         # Generate multiple choice questions using AI
@@ -974,7 +1018,6 @@ def create_quiz_alternatives():
         
     except Exception as e:
         print(f"Error creating quiz with alternatives: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -983,7 +1026,7 @@ def create_quiz_alternatives():
 def insert_slide():
     """
     Insert the selected AI-generated slide into the presentation
-    This is called after the user chooses one of the 3 options
+    This is called after the user chooses one of the 3 options, here I am adding all of the new slides logic, so it also has db code
     
     Expected payload:
     {
@@ -1027,7 +1070,6 @@ def insert_slide():
             return jsonify({"error": "PPTX file not found"}), 404
         
         # Load presentation
-        from pptx import Presentation as PptxPresentation
         prs = PptxPresentation(pptx_path)
         initial_slide_count = len(prs.slides)
         print(f"[AI INSERT] Initial slide count: {initial_slide_count}")
@@ -1051,23 +1093,14 @@ def insert_slide():
         after_add_count = len(prs.slides)
         print(f"[AI INSERT] After add_slide(): {after_add_count} slides (added {after_add_count - initial_slide_count})")
         
-        # Move the slide to the correct position (after insert_after)
-        # PowerPoint slides are 0-indexed in the API
-        # If insert_after=3 (1-based), we want to insert at index 3 (0-based), which is AFTER slide 3
-        # Example: [0, 1, 2, 3, 4] - insert at index 3 means new slide becomes index 3, old index 3 becomes 4
-        # NO! We want the new slide AFTER position 3, so it should be at index 4 in the final array
-        # Current slides: 0, 1, 2, 3(current), 4, 5
-        # After insert at position 4: 0, 1, 2, 3(current), 4(NEW), 5, 6
-        
         slides = list(prs.slides)
         new_slide = slides[-1]  # The slide we just added (at the end)
         
         print(f"[AI INSERT] Moving slide from end (index {len(slides)-1}) to position after slide {insert_after}")
         print(f"[AI INSERT] Current slides before move: {[f'Slide {i+1}' for i in range(len(slides))]}")
         
-        # insert_after is 1-based. To insert AFTER position N (1-based), we insert at index N (0-based)
-        # Example: insert_after=3 means "after slide 3", so new slide becomes slide 4, insert at index 3
-        target_index = insert_after  # This is correct: insert_after=3 (1-based) → index 3 (0-based) = position 4 (1-based)
+
+        target_index = insert_after 
         
         # Move slide by rearranging the XML
         xml_slides = prs.slides._sldIdLst
@@ -1088,7 +1121,7 @@ def insert_slide():
         verify_count = len(prs_verify.slides)
         print(f"[AI INSERT] Verification: Reloaded PPTX has {verify_count} slides")
         
-        # Convert to images - FORCE REGENERATION since we added a new slide
+        # Convert to images - FORCE REGENERATION since we added a new slide (this aint working in W10 and idk why ffs)
         output_dir = "./slides"
         print(f"[AI INSERT] Converting PPTX to images (force_regenerate=True)...")
         result = convert_pptx_to_images(pptx_path, output_dir, presentation_id, force_regenerate=True)
@@ -1098,17 +1131,46 @@ def insert_slide():
         new_slide_count = result["slide_count"]
         db.update_slide_metadata(presentation_id, slide_count=new_slide_count)
         
-        # TODO: Save to database - the user's input and the AI response
-        # db.add_question(
-        #     presentation_id=presentation_id,
-        #     question=user_input,
-        #     answer=slide_content,
-        #     slide_index=target_index + 1
-        # )
+        # needed to update the idx of the slides after inserting new ones, this will be a pain when checking the view sequence
+        # If we insert at position 5, all AI slides at position >= 5 need to be incremented
+        updated_slides = db.update_ai_slide_indices_after_insertion(presentation_id, target_index + 1)
+        if updated_slides:
+            print(f"[AI INSERT] Updated {len(updated_slides)} existing AI slide indices after position {target_index + 1}")
+            for slide in updated_slides:
+                print(f"  - AI slide {slide['id']} now at position {slide['slide_index']}")
+        
+        # Save AI-generated slide to database with user input
+        #for examples answer is None
+        # For questions answer contains the quiz answer
+        if question_type_format == "example":
+            answer = None
+            slide_content_to_save = slide_content
+        elif "[Question Result:]" in slide_content:
+            # Quiz with answer, split and save both parts
+            parts = slide_content.split("[Question Result:]", 1)
+            slide_content_to_save = parts[0].strip()
+            answer = parts[1].strip() if len(parts) > 1 else None
+        else:
+            # Quiz without explicit answer marker (shouldnt happen but geminy is dumb lately)
+            slide_content_to_save = question_part
+            answer = None
+        
+        db.add_ai_slide(
+            presentation_id=presentation_id,
+            slide_content=slide_content_to_save,
+            user_input=user_input,
+            answer=answer,
+            slide_index=target_index + 1
+        )
+        print(f"[AI INSERT] Saved AI slide to database at position {target_index + 1} (type: {question_type_format})")
+        print(f"[AI INSERT] Content length: {len(slide_content_to_save)}, Answer: {'Yes' if answer else 'None'}")
+        
+        # Add the slide index to the ai_generated_slide_indices array
+        db.add_ai_generated_slide(presentation_id, target_index + 1)
+        print(f"[AI INSERT] Added slide index {target_index + 1} to ai_generated_slide_indices")
         
         # Emit WebSocket event to notify frontend
-        import time
-        cache_bust_token = int(time.time() * 1000)  # millisecond timestamp
+        cache_bust_token = int(time.time() * 1000)
         
         socketio.emit(
             "presentation:slides_updated",
@@ -1131,7 +1193,6 @@ def insert_slide():
         
     except Exception as e:
         print(f"Error inserting slide: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
@@ -1150,47 +1211,50 @@ def handle_send_message(data):
     emit("response", {"msg": f"Backend received: {data['msg']}"}, broadcast=True)
 
 
-@socketio.on("bot_message")
-def handle_bot_message(data):
-    """
-    Handle messages from the Telegram bot (need to complete it, it will be a pretty big func)
-    Expected data:
-    {
-        "telegram_chat_id": int,
-        "question": str,
-        "presentation_id": int,
-        "slide_index": int (optional)
-    }
-    """
-    print("Received from bot:", data)
+
+#not using this anymore, it was a placeholder for before
+# @socketio.on("bot_message")
+# def handle_bot_message(data):
+#     """
+#     Handle messages from the Telegram bot (need to complete it, it will be a pretty big func)
+#     Expected data:
+#     {
+#         "telegram_chat_id": int,
+#         "question": str,
+#         "presentation_id": int,
+#         "slide_index": int (optional)
+#     }
+#     """
+#     print("Received from bot:", data)
     
-    try:
-        # Get user from telegram chat ID
-        user = db.get_user_by_telegram_chat_id(data["telegram_chat_id"])
-        if not user:
-            emit("bot_response", {"error": "User not found"})
-            return
+#     try:
+#         # Get user from telegram chat ID
+#         user = db.get_user_by_telegram_chat_id(data["telegram_chat_id"])
+#         if not user:
+#             emit("bot_response", {"error": "User not found"})
+#             return
         
-        # simulated the ai ans, will add it ltr (or never xd, not using that endpoint anymore)
-        answer = f"AI response to: {data['question']}"
+#         # Simulated AI answer (legacy endpoint, not actively used)
+#         answer = f"AI response to: {data['question']}"
         
-        # Save the question and answer
-        if "presentation_id" in data:
-            db.add_question(
-                presentation_id=data["presentation_id"],
-                question=data["question"],
-                answer=answer,
-                slide_index=data.get("slide_index")
-            )
+#         # Save as AI slide if presentation_id provided
+#         if "presentation_id" in data:
+#             db.add_ai_slide(
+#                 presentation_id=data["presentation_id"],
+#                 slide_content=answer,
+#                 user_input=data["question"],
+#                 answer=None,  # Legacy endpoint, no specific answer
+#                 slide_index=data.get("slide_index")
+#             )
         
-        emit("bot_response", {
-            "answer": answer,
-            "user_id": user["id"]
-        })
+#         emit("bot_response", {
+#             "answer": answer,
+#             "user_id": user["id"]
+#         })
         
-    except Exception as e:
-        print(f"Error handling bot message: {e}")
-        emit("bot_response", {"error": str(e)})
+#     except Exception as e:
+#         print(f"Error handling bot message: {e}")
+#         emit("bot_response", {"error": str(e)})
 
 
 #wont use this now, will add it from another one of the funcs

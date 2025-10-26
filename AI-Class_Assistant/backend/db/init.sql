@@ -1,8 +1,6 @@
--- Database initialization and reset script for Class Assistant Platform
--- This script drops existing tables and recreates the schema
-
 -- Drop existing tables if they exist (in reverse order of dependencies)
-DROP TABLE IF EXISTS presentation_questions CASCADE;
+DROP TABLE IF EXISTS presentation_analytics CASCADE;
+DROP TABLE IF EXISTS presentation_AI_slide CASCADE;
 DROP TABLE IF EXISTS presentations CASCADE;
 DROP TABLE IF EXISTS classes CASCADE;
 DROP TABLE IF EXISTS users CASCADE;
@@ -48,15 +46,27 @@ CREATE TABLE presentations (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create presentation_questions table
--- Stores questions asked during a presentation and their answers
-CREATE TABLE presentation_questions (
+-- Create presentation_AI_slide table
+-- Stores AI-generated slide content (examples and questions) during presentations
+CREATE TABLE presentation_AI_slide (
     id SERIAL PRIMARY KEY,
     presentation_id INTEGER NOT NULL REFERENCES presentations(id) ON DELETE CASCADE,
-    question TEXT NOT NULL,
-    answer TEXT NOT NULL,
-    asked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    slide_index INTEGER  -- The slide index where this question was asked (optional)
+    slide_content TEXT NOT NULL,  -- The AI-generated slide content
+    user_input TEXT NOT NULL,     -- The user's original input/question
+    answer TEXT,                  -- Optional: answer for quiz questions (NULL for examples)
+    slide_index INTEGER,          -- The slide index where this was inserted
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- create the presentation analytics table to store the jsons
+-- Stores navigation patterns and time spent per slide
+CREATE TABLE presentation_analytics (
+    id SERIAL PRIMARY KEY,
+    presentation_id INTEGER NOT NULL REFERENCES presentations(id) ON DELETE CASCADE,
+    slide_order JSONB NOT NULL,  -- Array of {slide: number, timestamp: number, duration: number}
+    time_per_slide JSONB NOT NULL,  -- Object mapping slide numbers to total time in milliseconds
+    total_time_ms INTEGER NOT NULL,  -- Total presentation time in milliseconds
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create indexes for better query performance
@@ -65,7 +75,8 @@ CREATE INDEX idx_users_telegram_chat_id ON users(telegram_chat_id);
 CREATE INDEX idx_users_telegram_link_code ON users(telegram_link_code);
 CREATE INDEX idx_classes_user_id ON classes(user_id);
 CREATE INDEX idx_presentations_class_id ON presentations(class_id);
-CREATE INDEX idx_presentation_questions_presentation_id ON presentation_questions(presentation_id);
+CREATE INDEX idx_presentation_AI_slide_presentation_id ON presentation_AI_slide(presentation_id);
+CREATE INDEX idx_presentation_analytics_presentation_id ON presentation_analytics(presentation_id);
 
 -- Create a function to update the updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -86,9 +97,7 @@ CREATE TRIGGER update_classes_updated_at BEFORE UPDATE ON classes
 CREATE TRIGGER update_presentations_updated_at BEFORE UPDATE ON presentations
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Insert some sample data for testing (optional, remove in production)
--- Uncomment the lines below if you want to start with sample data
-
+-- Insert some sample data for testing (will remove in production)
 -- INSERT INTO users (firebase_uid, email) VALUES 
 --     ('firebase_test_uid_1', 'student1@example.com'),
 --     ('firebase_test_uid_2', 'student2@example.com');
@@ -100,5 +109,5 @@ CREATE TRIGGER update_presentations_updated_at BEFORE UPDATE ON presentations
 -- INSERT INTO presentations (class_id, ai_generated_slide_indices, duration_seconds) VALUES
 --     (1, ARRAY[5, 7, 12], 3600);
 
--- INSERT INTO presentation_questions (presentation_id, question, answer, slide_index) VALUES
---     (1, 'What is a derivative?', 'A derivative represents the rate of change of a function with respect to a variable.', 5);
+-- INSERT INTO presentation_AI_slide (presentation_id, slide_content, user_input, answer, slide_index) VALUES
+--     (1, 'What is a derivative?', 'Explain derivative', 'A derivative represents the rate of change of a function with respect to a variable.', 5);

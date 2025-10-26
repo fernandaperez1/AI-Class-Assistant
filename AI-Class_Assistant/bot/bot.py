@@ -2,6 +2,10 @@ import os
 import asyncio
 import socketio
 import requests
+import tempfile
+from pathlib import Path
+from typing import Optional, Tuple
+
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -13,6 +17,7 @@ from telegram.ext import (
     filters, 
     ContextTypes
 )
+from transcription import TranscriptionError, TranscriptionResult, TranscriptionService
 
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -22,6 +27,15 @@ BACKEND_API_URL = os.getenv("BACKEND_API_URL", "http://backend:5000")
 print("TELEGRAM_TOKEN =", TELEGRAM_TOKEN)
 print("BACKEND_WS_URL =", BACKEND_WS_URL)
 print("BACKEND_API_URL =", BACKEND_API_URL)
+
+BASE_DIR = Path(__file__).resolve().parent
+DEFAULT_ES_MODEL = os.getenv(
+    "VOSK_ES_MODEL", str(BASE_DIR / "models" / "vosk-model-small-es-0.42")
+)
+DEFAULT_EN_MODEL = os.getenv(
+    "VOSK_EN_MODEL", str(BASE_DIR / "models" / "vosk-model-small-en-us-0.15")
+)
+DEFAULT_WHISPER_MODEL = os.getenv("WHISPER_MODEL", "tiny")
 
 # Conversation states
 WAITING_FOR_CODE = 1
@@ -34,6 +48,75 @@ active_presentation_messages = {}  # Format: {chat_id: message_id}
 
 #global bot application reference (will be set in main(), but I needed to use it everywhere, ik its bad practice xd)
 bot_app = None
+
+_transcription_service: Optional[TranscriptionService] = None
+
+
+def get_transcription_service() -> TranscriptionService:
+    """Lazy-load the transcription pipeline to avoid blocking startup."""
+    global _transcription_service
+    if _transcription_service is None:
+        _transcription_service = TranscriptionService(
+            es_model_dir=Path(DEFAULT_ES_MODEL),
+            en_model_dir=Path(DEFAULT_EN_MODEL),
+            whisper_model_name=DEFAULT_WHISPER_MODEL,
+        )
+    return _transcription_service
+
+
+async def _transcribe_media_message(media) -> TranscriptionResult:
+    """
+    Download a Telegram voice/audio message, normalize it, and return the transcript.
+    """
+    telegram_file = await media.get_file()
+    tmp = tempfile.NamedTemporaryFile(prefix="tg_voice_", suffix=".ogg", delete=False)
+    tmp_path = tmp.name
+    tmp.close()
+
+    await telegram_file.download_to_drive(tmp_path)
+
+    loop = asyncio.get_running_loop()
+    service = get_transcription_service()
+    try:
+        return await loop.run_in_executor(
+            None, service.transcribe_file, Path(tmp_path)
+        )
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+
+async def extract_user_input_from_message(
+    update: Update,
+) -> Tuple[Optional[str], Optional[str], Optional[TranscriptionResult]]:
+    """
+    Return (text, input_type, transcription_result) for either text or voice messages.
+    input_type is "text" or "audio".
+    """
+    if update.message and update.message.text:
+        text_value = update.message.text.strip()
+        return (text_value if text_value else None, "text", None)
+
+    media = None
+    if update.message:
+        media = update.message.voice or update.message.audio
+
+    if media:
+        transcription = await _transcribe_media_message(media)
+        return (transcription.text, "audio", transcription)
+
+    return None, None, None
+
+
+def build_transcription_preview(result: TranscriptionResult) -> str:
+    snippet = result.text.strip()
+    if len(snippet) > 400:
+        snippet = snippet[:400] + "..."
+    lang = result.language.upper() if result.language else "?"
+    confidence = f"{result.confidence:.2f}"
+    return f"Audio transcription (language={lang}, confidence={confidence}):\n{snippet}"
 
 sio = socketio.AsyncClient()
 
@@ -667,7 +750,7 @@ async def handle_ai_create_example(query, presentation_id: int):
         f"*Create Example (Slide {current_slide})*\n\n"
         "Please provide context for the example you want:\n\n"
         "• Send a text message describing what you want\n"
-        "  Example: \"make an example about ECG calculation\"\n\n"
+        "  Example: \"make an example about mitochondria\"\n\n"
         "• OR send a voice message with your request\n\n"
         "• OR type `/skip` for no specific context\n\n"
         "I'll generate 3 examples based on the presentation content."
@@ -1119,8 +1202,11 @@ async def show_controls(chat_id, presentation_id, current_slide=1, slide_count=0
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle regular messages"""
+    if not update.message:
+        return
+
     chat_id = update.effective_chat.id
-    msg = update.message.text if update.message.text else None
+    msg = update.message.text.strip() if update.message.text else None
     
     # check user is in AI state (waiting for example input)
     if chat_id in user_states:
@@ -1130,204 +1216,222 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         slide = state.get("slide")
         
         if action == "create_example":
-            # handle text or voice input for example creation
-            user_input = None
-            input_type = "text"
-            
-            if update.message.text:
-                user_input = update.message.text
-                input_type = "text"
-            elif update.message.voice:
-                # Handle voice message (still havent implemented it tho, should convert the audio to text here and pass it to the backend as text)
-                input_type = "audio"
-                # get file_id to pass to backend
-                user_input = update.message.voice.file_id
-            
-            if user_input:
-                await update.message.reply_text("Generating examples...\n\n_This may take a few seconds_")
-                try:
-                    # call backend AI endpoint (returns 3 options for everything, left it in the query)
-                    payload = {
+            try:
+                user_input, input_type, transcription = await extract_user_input_from_message(update)
+            except TranscriptionError as exc:
+                await update.message.reply_text(f"Could not transcribe the audio message: {exc}")
+                return
+
+            if not user_input:
+                await update.message.reply_text("Please send a text or voice message.")
+                return
+
+            if input_type == "audio" and transcription:
+                await update.message.reply_text(build_transcription_preview(transcription))
+
+            await update.message.reply_text("Generating examples...\n\n_This may take a few seconds_", parse_mode='Markdown')
+            try:
+                payload = {
+                    "presentation_id": presentation_id,
+                    "slide_number": slide,
+                    "telegram_chat_id": chat_id,
+                    "user_input": user_input,
+                    "input_type": input_type
+                }
+
+                if transcription:
+                    payload["transcription_language"] = transcription.language
+                    payload["transcription_confidence"] = transcription.confidence
+                media_file_id = None
+                if update.message.voice:
+                    media_file_id = update.message.voice.file_id
+                elif update.message.audio:
+                    media_file_id = update.message.audio.file_id
+                if media_file_id:
+                    payload["voice_file_id"] = media_file_id
+
+                ai_resp = requests.post(
+                    f"{BACKEND_API_URL}/api/ai/create-example",
+                    json=payload,
+                    timeout=60
+                )
+                
+                if ai_resp.ok:
+                    result = ai_resp.json()
+                    options = result.get("options", [])
+                    
+                    if len(options) < 3:
+                        await update.message.reply_text(
+                            "❌ AI returned fewer than 3 options. Please try again."
+                        )
+                        user_states.pop(chat_id, None)
+                        return
+                    
+                    message = (
+                        f"*Examples for Slide {slide}*\n\n"
+                        "*Generated 3 options. Choose one to add to your presentation:*\n\n"
+                        f"*Option 1:*\n{options[0][:300]}{'...' if len(options[0]) > 300 else ''}\n\n"
+                        f"*Option 2:*\n{options[1][:300]}{'...' if len(options[1]) > 300 else ''}\n\n"
+                        f"*Option 3:*\n{options[2][:300]}{'...' if len(options[2]) > 300 else ''}\n\n"
+                    )
+                    
+                    user_states[chat_id] = {
+                        "action": "select_example",
                         "presentation_id": presentation_id,
-                        "slide_number": slide,
-                        "telegram_chat_id": chat_id,
+                        "slide": slide,
+                        "options": options,
+                        "slide_type": "example",
                         "user_input": user_input,
                         "input_type": input_type
                     }
                     
-                    # If audio, include voice file_id
-                    if input_type == "audio":
-                        payload["voice_file_id"] = user_input
+                    keyboard = [
+                        [InlineKeyboardButton("✅ Choose Option 1", callback_data=f"select:0:{presentation_id}")],
+                        [InlineKeyboardButton("✅ Choose Option 2", callback_data=f"select:1:{presentation_id}")],
+                        [InlineKeyboardButton("✅ Choose Option 3", callback_data=f"select:2:{presentation_id}")],
+                        [InlineKeyboardButton("🔄 Generate New Options", callback_data=f"ai:create_example:{presentation_id}")],
+                        [InlineKeyboardButton("❌ Cancel", callback_data=f"ai:menu:{presentation_id}")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
                     
-                    ai_resp = requests.post(
-                        f"{BACKEND_API_URL}/api/ai/create-example",
-                        json=payload,
-                        timeout=60
+                    await update.message.reply_text(
+                        message,
+                        parse_mode='Markdown',
+                        reply_markup=reply_markup
                     )
-                    
-                    if ai_resp.ok:
-                        result = ai_resp.json()
-                        options = result.get("options", [])
-                        
-                        if len(options) < 3:
-                            await update.message.reply_text(
-                                "❌ AI returned fewer than 3 options. Please try again."
-                            )
-                            user_states.pop(chat_id, None)
-                            return
-                        
-                        # Show the 3 options as buttons
-                        message = (
-                            f"*Examples for Slide {slide}*\n\n"
-                            "*Generated 3 options. Choose one to add to your presentation:*\n\n"
-                            f"*Option 1:*\n{options[0][:300]}{'...' if len(options[0]) > 300 else ''}\n\n"
-                            f"*Option 2:*\n{options[1][:300]}{'...' if len(options[1]) > 300 else ''}\n\n"
-                            f"*Option 3:*\n{options[2][:300]}{'...' if len(options[2]) > 300 else ''}\n\n"
-                        )
-                        
-                        # Update user state with options
-                        user_states[chat_id] = {
-                            "action": "select_example",
-                            "presentation_id": presentation_id,
-                            "slide": slide,
-                            "options": options,
-                            "slide_type": "example",
-                            "user_input": user_input if input_type == "text" else "voice message"
-                        }
-                        
-                        keyboard = [
-                            [InlineKeyboardButton("✅ Choose Option 1", callback_data=f"select:0:{presentation_id}")],
-                            [InlineKeyboardButton("✅ Choose Option 2", callback_data=f"select:1:{presentation_id}")],
-                            [InlineKeyboardButton("✅ Choose Option 3", callback_data=f"select:2:{presentation_id}")],
-                            [InlineKeyboardButton("🔄 Generate New Options", callback_data=f"ai:create_example:{presentation_id}")],
-                            [InlineKeyboardButton("❌ Cancel", callback_data=f"ai:menu:{presentation_id}")]
-                        ]
-                        reply_markup = InlineKeyboardMarkup(keyboard)
-                        
-                        await update.message.reply_text(
-                            message,
-                            parse_mode='Markdown',
-                            reply_markup=reply_markup
-                        )
-                    else:
-                        await update.message.reply_text("❌ Failed to generate examples. Please try again.")
-                        user_states.pop(chat_id, None)
-                        pres_resp = requests.get(f"{BACKEND_API_URL}/api/presentations/{presentation_id}", timeout=5)
-                        if pres_resp.ok:
-                            pres_data = pres_resp.json()
-                            await show_controls(chat_id, presentation_id, pres_data.get("current_slide", 1), pres_data.get("slide_count", 0), context)
-                except Exception as e:
-                    print(f"Error creating example: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    await update.message.reply_text("❌ Error connecting to backend.")
+                else:
+                    await update.message.reply_text("❌ Failed to generate examples. Please try again.")
                     user_states.pop(chat_id, None)
-                    try:
-                        pres_resp = requests.get(f"{BACKEND_API_URL}/api/presentations/{presentation_id}", timeout=5)
-                        if pres_resp.ok:
-                            pres_data = pres_resp.json()
-                            await show_controls(chat_id, presentation_id, pres_data.get("current_slide", 1), pres_data.get("slide_count", 0), context)
-                    except:
-                        pass
-                
-                # Don't clear user state yet - they need to select an option
-                return
-            else:
-                await update.message.reply_text("Please send a text or voice message.")
-                return
+                    pres_resp = requests.get(f"{BACKEND_API_URL}/api/presentations/{presentation_id}", timeout=5)
+                    if pres_resp.ok:
+                        pres_data = pres_resp.json()
+                        await show_controls(chat_id, presentation_id, pres_data.get("current_slide", 1), pres_data.get("slide_count", 0), context)
+            except Exception as e:
+                print(f"Error creating example: {e}")
+                import traceback
+                traceback.print_exc()
+                await update.message.reply_text("❌ Error connecting to backend.")
+                user_states.pop(chat_id, None)
+                try:
+                    pres_resp = requests.get(f"{BACKEND_API_URL}/api/presentations/{presentation_id}", timeout=5)
+                    if pres_resp.ok:
+                        pres_data = pres_resp.json()
+                        await show_controls(chat_id, presentation_id, pres_data.get("current_slide", 1), pres_data.get("slide_count", 0), context)
+                except:
+                    pass
+            
+            return
         
         elif action in ["create_quiz", "create_quiz_alt"]:
-            # Handle text input for quiz creation
-            user_input = update.message.text if update.message.text else None
+            try:
+                user_input, input_type, transcription = await extract_user_input_from_message(update)
+            except TranscriptionError as exc:
+                await update.message.reply_text(f"Could not transcribe the audio: {exc}")
+                return
             
-            if user_input:
-                await update.message.reply_text("Generating quiz questions...\n\n_This may take a few seconds_")
+            if not user_input:
+                await update.message.reply_text("Please send a text or voice message with your requirements, or use the Skip button.")
+                return
+
+            if input_type == "audio" and transcription:
+                await update.message.reply_text(build_transcription_preview(transcription))
+
+            await update.message.reply_text("Generating quiz questions...\n\n_This may take a few seconds_", parse_mode='Markdown')
+            
+            try:
+                if action == "create_quiz":
+                    endpoint = "/api/ai/create-quiz"
+                    slide_type = "quiz"
+                    title_prefix = "Quiz Questions"
+                else:
+                    endpoint = "/api/ai/create-quiz-alternatives"
+                    slide_type = "quiz-alternatives"
+                    title_prefix = "Multiple Choice Quiz"
                 
-                try:
-                    # Determine endpoint and slide type
-                    if action == "create_quiz":
-                        endpoint = "/api/ai/create-quiz"
-                        slide_type = "quiz"
-                        title_prefix = "Quiz Questions"
-                    else:  # create_quiz_alt
-                        endpoint = "/api/ai/create-quiz-alternatives"
-                        slide_type = "quiz-alternatives"
-                        title_prefix = "Multiple Choice Quiz"
+                payload = {
+                    "presentation_id": presentation_id,
+                    "slide_number": slide,
+                    "telegram_chat_id": chat_id,
+                    "user_input": user_input,
+                    "input_type": input_type
+                }
+                if transcription:
+                    payload["transcription_language"] = transcription.language
+                    payload["transcription_confidence"] = transcription.confidence
+                media_file_id = None
+                if update.message.voice:
+                    media_file_id = update.message.voice.file_id
+                elif update.message.audio:
+                    media_file_id = update.message.audio.file_id
+                if media_file_id:
+                    payload["voice_file_id"] = media_file_id
+                
+                ai_resp = requests.post(
+                    f"{BACKEND_API_URL}{endpoint}",
+                    json=payload,
+                    timeout=60
+                )
+                
+                if ai_resp.ok:
+                    result = ai_resp.json()
+                    options = result.get("options", [])
                     
-                    # Call backend AI endpoint
-                    ai_resp = requests.post(
-                        f"{BACKEND_API_URL}{endpoint}",
-                        json={
-                            "presentation_id": presentation_id,
-                            "slide_number": slide,
-                            "telegram_chat_id": chat_id,
-                            "user_input": user_input
-                        },
-                        timeout=60
+                    if len(options) < 3:
+                        await update.message.reply_text(
+                            "❌ AI returned fewer than 3 options. Please try again."
+                        )
+                        user_states.pop(chat_id, None)
+                        return
+                    
+                    message = (
+                        f"*{title_prefix} for Slide {slide}*\n\n"
+                        "*Generated 3 options. Choose one to add to your presentation:*\n\n"
+                        f"*Option 1:*\n{options[0][:500]}{'...' if len(options[0]) > 500 else ''}\n\n"
+                        f"*Option 2:*\n{options[1][:500]}{'...' if len(options[1]) > 500 else ''}\n\n"
+                        f"*Option 3:*\n{options[2][:500]}{'...' if len(options[2]) > 500 else ''}\n\n"
                     )
                     
-                    if ai_resp.ok:
-                        result = ai_resp.json()
-                        options = result.get("options", [])
-                        
-                        if len(options) < 3:
-                            await update.message.reply_text(
-                                "❌ AI returned fewer than 3 options. Please try again."
-                            )
-                            user_states.pop(chat_id, None)
-                            return
-                        
-                        # Show the 3 options as buttons
-                        message = (
-                            f"*{title_prefix} for Slide {slide}*\n\n"
-                            "*Generated 3 options. Choose one to add to your presentation:*\n\n"
-                            f"*Option 1:*\n{options[0][:300]}{'...' if len(options[0]) > 300 else ''}\n\n"
-                            f"*Option 2:*\n{options[1][:300]}{'...' if len(options[1]) > 300 else ''}\n\n"
-                            f"*Option 3:*\n{options[2][:300]}{'...' if len(options[2]) > 300 else ''}\n\n"
-                        )
-                        
-                        # Update user state with options
-                        user_states[chat_id] = {
-                            "action": f"select_{action.split('_')[1]}{'_alt' if action == 'create_quiz_alt' else ''}",
-                            "presentation_id": presentation_id,
-                            "slide": slide,
-                            "options": options,
-                            "slide_type": slide_type,
-                            "user_input": user_input
-                        }
-                        
-                        keyboard = [
-                            [InlineKeyboardButton("✅ Choose Option 1",callback_data=f"select:0:{presentation_id}")],
-                            [InlineKeyboardButton("✅ Choose Option 2",callback_data=f"select:1:{presentation_id}")],
-                            [InlineKeyboardButton("✅ Choose Option 3",callback_data=f"select:2:{presentation_id}")],
-                            [InlineKeyboardButton("🔄 Generate New Options",callback_data=f"skip:{'quiz_alt' if action == 'create_quiz_alt' else 'quiz'}:{presentation_id}")],
-                            [InlineKeyboardButton("❌ Cancel",callback_data=f"ai:menu:{presentation_id}")]
-                        ]
-                        reply_markup = InlineKeyboardMarkup(keyboard)
-                        
-                        await update.message.reply_text(
-                            message,
-                            parse_mode='Markdown',
-                            reply_markup=reply_markup
-                        )
-                    else:
-                        await update.message.reply_text("❌ Failed to generate quiz questions. Please try again.")
-                        user_states.pop(chat_id, None)
-                except Exception as e:
-                    print(f"Error creating quiz: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    await update.message.reply_text("❌ Error connecting to backend.")
+                    user_states[chat_id] = {
+                        "action": f"select_{action.split('_')[1]}{'_alt' if action == 'create_quiz_alt' else ''}",
+                        "presentation_id": presentation_id,
+                        "slide": slide,
+                        "options": options,
+                        "slide_type": slide_type,
+                        "user_input": user_input,
+                        "input_type": input_type
+                    }
+                    
+                    keyboard = [
+                        [InlineKeyboardButton("✅ Choose Option 1",callback_data=f"select:0:{presentation_id}")],
+                        [InlineKeyboardButton("✅ Choose Option 2",callback_data=f"select:1:{presentation_id}")],
+                        [InlineKeyboardButton("✅ Choose Option 3",callback_data=f"select:2:{presentation_id}")],
+                        [InlineKeyboardButton("🔄 Generate New Options",callback_data=f"skip:{'quiz_alt' if action == 'create_quiz_alt' else 'quiz'}:{presentation_id}")],
+                        [InlineKeyboardButton("❌ Cancel",callback_data=f"ai:menu:{presentation_id}")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    await update.message.reply_text(
+                        message,
+                        parse_mode='Markdown',
+                        reply_markup=reply_markup
+                    )
+                else:
+                    await update.message.reply_text("❌ Failed to generate quiz questions. Please try again.")
                     user_states.pop(chat_id, None)
-                
-                # Don't clear user state yet - they need to select an option
-                return
-            else:
-                await update.message.reply_text("Please send a text message with your requirements, or use the Skip button.")
-                return
+            except Exception as e:
+                print(f"Error creating quiz: {e}")
+                import traceback
+                traceback.print_exc()
+                await update.message.reply_text("❌ Error connecting to backend.")
+                user_states.pop(chat_id, None)
+            
+            return
     
     # check if waiting for slide number (goto functionality)
     if context.user_data.get('waiting_for_slide_number', False):
+        if not msg:
+            await update.message.reply_text("Please send the slide number as text.")
+            return
         try:
             slide_number = int(msg.strip())
             presentation_id = context.user_data.get('goto_presentation_id')
@@ -1404,6 +1508,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Check if waiting for link code
     if context.user_data.get('waiting_for_code', False):
+        if not msg:
+            await update.message.reply_text("Please send the 6-character code as text.")
+            return
         # User is sending a link code
         link_code = msg.strip().upper()
         
@@ -1641,7 +1748,8 @@ def main():
     app.add_handler(CallbackQueryHandler(button_callback))
 
     # message handler (must be last, do not movee)
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    allowed_messages = (filters.TEXT | filters.VOICE | filters.AUDIO) & ~filters.COMMAND
+    app.add_handler(MessageHandler(allowed_messages, handle_message))
 
     print("TutorFlow Bot is starting...")
     
