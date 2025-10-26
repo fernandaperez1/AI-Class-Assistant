@@ -514,6 +514,42 @@ def end_presentation(presentation_id):
         return jsonify({"error": str(e)}), 500
     
 
+@app.route("/api/presentations/<int:presentation_id>/analytics", methods=["POST"])
+def save_analytics(presentation_id):
+    """Save presentation analytics data"""
+    try:
+        data = request.json
+        slide_order = data.get("slide_order", [])
+        time_per_slide = data.get("time_per_slide", {})
+        total_time_ms = data.get("total_time_ms", 0)
+        
+        print(f"[ANALYTICS] Saving analytics for presentation {presentation_id}")
+        print(f"[ANALYTICS] Total slides visited:{len(slide_order)}")
+        print(f"[ANALYTICS] Total time:{total_time_ms}ms ({total_time_ms/1000:.2f}s)")
+        
+        result = db.save_presentation_analytics(
+            presentation_id=presentation_id,
+            slide_order=slide_order,
+            time_per_slide=time_per_slide,
+            total_time_ms=total_time_ms
+        )
+        
+        return jsonify(result), 201
+    except Exception as e:
+        print(f"[ANALYTICS] Error saving analytics: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/presentations/<int:presentation_id>/analytics", methods=["GET"])
+def get_analytics(presentation_id):
+    """Get presentation analytics data (using this for the info tab only)"""
+    try:
+        analytics = db.get_presentation_analytics(presentation_id)
+        return jsonify(analytics), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/presentations/<int:presentation_id>/control", methods=["POST"])
 def control_presentation(presentation_id):
     """
@@ -742,7 +778,7 @@ def serve_slide_image(presentation_id, slide_number):
 
 @app.route("/api/classes/<int:class_id>/presentation-info", methods=["GET"])
 def get_presentation_info(class_id):
-    """Get presentation information including slide count and availability, gotta complete this for the last deliverable, cz its unfinished"""
+    """Get presentation information including slide count, availability, and analytics, its all meshed into one func, should split"""
     try:
         presentation = db.get_presentation_by_class_id(class_id)
         if not presentation:
@@ -753,6 +789,9 @@ def get_presentation_info(class_id):
             return jsonify({"error": "PPTX file not found"}), 404
         
         slide_count = get_slide_count(pptx_path)
+
+        analytics = db.get_latest_presentation_analytics(presentation["id"])
+        ai_slides = db.get_presentation_ai_slides(presentation["id"])
         
         return jsonify({
             "presentation_id": presentation["id"],
@@ -761,7 +800,11 @@ def get_presentation_info(class_id):
             "pptx_path": pptx_path,
             "started_at": presentation.get("started_at"),
             "ended_at": presentation.get("ended_at"),
-            "duration_seconds": presentation.get("duration_seconds")
+            "duration_seconds": presentation.get("duration_seconds"),
+            "ai_generated_slide_indices": presentation.get("ai_generated_slide_indices", []),
+            "ai_slides_count": len(ai_slides),
+            "ai_slides": ai_slides,
+            "analytics": analytics
         }), 200
     except Exception as e:
         print(f"Error getting presentation info: {e}")

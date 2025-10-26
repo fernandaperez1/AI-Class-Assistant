@@ -1,7 +1,5 @@
--- Database initialization and reset script for Class Assistant Platform
--- This script drops existing tables and recreates the schema
-
 -- Drop existing tables if they exist (in reverse order of dependencies)
+DROP TABLE IF EXISTS presentation_analytics CASCADE;
 DROP TABLE IF EXISTS presentation_AI_slide CASCADE;
 DROP TABLE IF EXISTS presentations CASCADE;
 DROP TABLE IF EXISTS classes CASCADE;
@@ -60,6 +58,17 @@ CREATE TABLE presentation_AI_slide (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- create the presentation analytics table to store the jsons
+-- Stores navigation patterns and time spent per slide
+CREATE TABLE presentation_analytics (
+    id SERIAL PRIMARY KEY,
+    presentation_id INTEGER NOT NULL REFERENCES presentations(id) ON DELETE CASCADE,
+    slide_order JSONB NOT NULL,  -- Array of {slide: number, timestamp: number, duration: number}
+    time_per_slide JSONB NOT NULL,  -- Object mapping slide numbers to total time in milliseconds
+    total_time_ms INTEGER NOT NULL,  -- Total presentation time in milliseconds
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create indexes for better query performance
 CREATE INDEX idx_users_firebase_uid ON users(firebase_uid);
 CREATE INDEX idx_users_telegram_chat_id ON users(telegram_chat_id);
@@ -67,6 +76,7 @@ CREATE INDEX idx_users_telegram_link_code ON users(telegram_link_code);
 CREATE INDEX idx_classes_user_id ON classes(user_id);
 CREATE INDEX idx_presentations_class_id ON presentations(class_id);
 CREATE INDEX idx_presentation_AI_slide_presentation_id ON presentation_AI_slide(presentation_id);
+CREATE INDEX idx_presentation_analytics_presentation_id ON presentation_analytics(presentation_id);
 
 -- Create a function to update the updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
@@ -87,9 +97,7 @@ CREATE TRIGGER update_classes_updated_at BEFORE UPDATE ON classes
 CREATE TRIGGER update_presentations_updated_at BEFORE UPDATE ON presentations
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Insert some sample data for testing (optional, remove in production)
--- Uncomment the lines below if you want to start with sample data
-
+-- Insert some sample data for testing (will remove in production)
 -- INSERT INTO users (firebase_uid, email) VALUES 
 --     ('firebase_test_uid_1', 'student1@example.com'),
 --     ('firebase_test_uid_2', 'student2@example.com');

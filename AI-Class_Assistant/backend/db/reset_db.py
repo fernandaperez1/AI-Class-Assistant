@@ -85,6 +85,7 @@ def reset_database():
         print("  - classes")
         print("  - presentations")
         print("  - presentation_AI_slide")
+        print("  - presentation_analytics")
         
         cursor.close()
         conn.close()

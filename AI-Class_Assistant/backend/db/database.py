@@ -564,3 +564,52 @@ def update_slide_metadata(presentation_id: int, *, current_slide: int | None = N
         cursor.execute(query, tuple(values))
         row = cursor.fetchone()
         return dict(row) if row else None
+
+
+# analytics stuff ------------------------------------------------------------------------------------------------
+def save_presentation_analytics(presentation_id, slide_order, time_per_slide, total_time_ms):
+    """Save presentation analytics data"""
+    import json
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            INSERT INTO presentation_analytics 
+            (presentation_id, slide_order, time_per_slide, total_time_ms)
+            VALUES (%s, %s, %s, %s)
+            RETURNING id, presentation_id, slide_order, time_per_slide, total_time_ms, created_at
+            """,
+            (presentation_id, json.dumps(slide_order), json.dumps(time_per_slide), total_time_ms)
+        )
+        return dict(cursor.fetchone())
+
+
+def get_presentation_analytics(presentation_id):
+    """Get all analytics entries for a presentation (ordered by most recent first)"""
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, presentation_id, slide_order, time_per_slide, total_time_ms, created_at
+            FROM presentation_analytics
+            WHERE presentation_id = %s
+            ORDER BY created_at DESC
+            """,
+            (presentation_id,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def get_latest_presentation_analytics(presentation_id):
+    """Get the most recent analytics entry for a presentation"""
+    with get_db_cursor() as cursor:
+        cursor.execute(
+            """
+            SELECT id, presentation_id, slide_order, time_per_slide, total_time_ms, created_at
+            FROM presentation_analytics
+            WHERE presentation_id = %s
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            (presentation_id,)
+        )
+        result = cursor.fetchone()
+        return dict(result) if result else None

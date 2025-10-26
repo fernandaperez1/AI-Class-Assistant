@@ -9,6 +9,7 @@ import {
   startPresentation,
   endPresentation 
 } from "../services/presentations";
+import { API_URL } from "../config";
 
 function Presentations({ user }) {
   const { classId } = useParams();
@@ -46,7 +47,7 @@ function Presentations({ user }) {
     slideStartTimeRef.current = now;
   };
 
-  // leaving this here to send the full data to the backend ltr
+  //calc the time stats
   const calculateTimeStatistics = (slideOrder) => {
     const timePerSlide = {};
     slideOrder.forEach(entry => {
@@ -61,6 +62,33 @@ function Presentations({ user }) {
       totalTime: Object.values(timePerSlide).reduce((sum, time) => sum + time, 0),
       slideOrder
     };
+  };
+
+  //save analythics to the db
+  const saveAnalytics = async (finalOrder) => {
+    if (!presentationId || finalOrder.length === 0) return;
+    
+    const stats = calculateTimeStatistics(finalOrder);
+    
+    try {
+      const response = await fetch(`${API_URL}/api/presentations/${presentationId}/analytics`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          slide_order: stats.slideOrder,
+          time_per_slide: stats.timePerSlide,
+          total_time_ms: stats.totalTime
+        })
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to save analytics');
+      }
+      
+      console.log('[ANALYTICS] Successfully saved presentation analytics');
+    } catch (err) {
+      console.error('[ANALYTICS] Error saving analytics:', err);
+    }
   };
 
   useEffect(() => {
@@ -150,12 +178,35 @@ function Presentations({ user }) {
       }
     };
 
-    const handleSlideAdded = ({ presentation_id, new_slide_count, cache_bust }) => {
+    const handleSlideAdded = ({ presentation_id, new_slide_count, inserted_at, cache_bust }) => {
       if (presentation_id === presentationId) {
-        console.log(`Slides added! New count: ${new_slide_count}, cache_bust: ${cache_bust}`);
+        console.log(`Slides added! New count: ${new_slide_count}, inserted at: ${inserted_at}, cache_bust: ${cache_bust}`);
+        
         setTotalSlides(new_slide_count);
-        // changed the cache I had cz the images would not refresh, the cache bust is the time it will stay
         setImageVersion(cache_bust || Date.now());
+        
+        //iIf a slide was inserted before or at the current position, adjust current slide (so tha tthe order makes sense then)
+        if (inserted_at && inserted_at <= currentSlide) {
+          const newCurrentSlide = currentSlide + 1;
+          console.log(`Adjusting current slide from ${currentSlide} to ${newCurrentSlide} due to insertion at ${inserted_at}`);
+          setCurrentSlide(newCurrentSlide);
+          
+          if (presentationStarted) {
+            recordSlideVisit(newCurrentSlide);
+          }
+        }
+
+        setPresentationOrder(prevOrder => {
+          return prevOrder.map(entry => {
+            if (entry.slide >= inserted_at) {
+              return {
+                ...entry,
+                slide: entry.slide + 1
+              };
+            }
+            return entry;
+          });
+        });
       }
     };
 
@@ -166,7 +217,7 @@ function Presentations({ user }) {
       socket.off("presentation:update", handleUpdate);
       socket.off("presentation:slides_updated", handleSlideAdded);
     };
-  }, [presentationId]);
+  }, [presentationId, presentationStarted, currentSlide]);
 
   const handleStartPresentation = async () => {
     if (!presentationId) return;
@@ -221,42 +272,22 @@ function Presentations({ user }) {
       const now = Date.now();
       const finalDuration = slideStartTimeRef.current ? now - slideStartTimeRef.current : 0;
       
-      setPresentationOrder(prevOrder => {
-        const finalOrder = [...prevOrder];
-        if (finalOrder.length > 0) {
-          //update the last entry with its final duration
-          finalOrder[finalOrder.length - 1] = {
-            ...finalOrder[finalOrder.length - 1],
+      //calculate final order taking into consideration the race condition before state update (fk use state)
+      const finalOrder = presentationOrder.map((entry, index) => {
+        //update the last entry with its final duration
+        if (index === presentationOrder.length - 1) {
+          return {
+            ...entry,
             duration: finalDuration
           };
         }
-        
-        // calculate statistics (debugging, will comment)
-        // console.log("=== PRESENTATION STATISTICS ===");
-        // console.log("Full slide order:", finalOrder);
-        
-        // Calculate total time per slide
-        const timePerSlide = {};
-        finalOrder.forEach(entry => {
-          if (!timePerSlide[entry.slide]) {
-            timePerSlide[entry.slide] = 0;
-          }
-          timePerSlide[entry.slide] += entry.duration;
-        });
-        
-        // console.log("\nTime spent per slide (in seconds):");
-        // Object.entries(timePerSlide)
-        //   .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
-        //   .forEach(([slide, duration]) => {
-        //     console.log(`  Slide ${slide}: ${(duration / 1000).toFixed(2)}s`);
-        //   });
-        
-        const totalTime = Object.values(timePerSlide).reduce((sum, time) => sum + time, 0);
-        // console.log(`\nTotal presentation time: ${(totalTime / 1000).toFixed(2)}s`);
-        // console.log("==============================\n");
-        
-        return finalOrder;
+        return entry;
       });
+      
+      console.log("Final order to save:", finalOrder);
+      
+      //save analytics to backend
+      await saveAnalytics(finalOrder);
       
       const telegramChatId = user?.telegram_chat_id || null;
       const result = await endPresentation(presentationId, telegramChatId);
@@ -265,6 +296,7 @@ function Presentations({ user }) {
       
       //reset tracking
       slideStartTimeRef.current = null;
+      setPresentationOrder([]);
       
       //exit fullscreen mode
       if (document.fullscreenElement || document.webkitFullscreenElement || document.msFullscreenElement) {
@@ -289,49 +321,29 @@ function Presentations({ user }) {
         
         if (presentationStarted && presentationId) {
           try {
-            //same as before
             const now = Date.now();
             const finalDuration = slideStartTimeRef.current ? now - slideStartTimeRef.current : 0;
             
-            setPresentationOrder(prevOrder => {
-              const finalOrder = [...prevOrder];
-              if (finalOrder.length > 0) {
-                finalOrder[finalOrder.length - 1] = {
-                  ...finalOrder[finalOrder.length - 1],
+            // same shit
+            const finalOrder = presentationOrder.map((entry, index) => {
+              if (index === presentationOrder.length - 1) {
+                return {
+                  ...entry,
                   duration: finalDuration
                 };
               }
-              
-              console.log("=== PRESENTATION STATISTICS (Auto-ended) ===");
-              console.log("Full slide order:", finalOrder);
-              
-              // Calculate total time per slide
-              const timePerSlide = {};
-              finalOrder.forEach(entry => {
-                if (!timePerSlide[entry.slide]) {
-                  timePerSlide[entry.slide] = 0;
-                }
-                timePerSlide[entry.slide] += entry.duration;
-              });
-              
-              console.log("\nTime spent per slide (in seconds):");
-              Object.entries(timePerSlide)
-                .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
-                .forEach(([slide, duration]) => {
-                  console.log(`  Slide ${slide}: ${(duration / 1000).toFixed(2)}s`);
-                });
-              
-              const totalTime = Object.values(timePerSlide).reduce((sum, time) => sum + time, 0);
-              console.log(`\nTotal presentation time: ${(totalTime / 1000).toFixed(2)}s`);
-              console.log("==============================\n");
-              
-              return finalOrder;
+              return entry;
             });
+            
+            console.log("Final order to save (auto-end):", finalOrder);
+
+            await saveAnalytics(finalOrder);
             
             const telegramChatId = user?.telegram_chat_id || null;
             const result = await endPresentation(presentationId, telegramChatId);
             setPresentationStarted(false);
             slideStartTimeRef.current = null;
+            setPresentationOrder([]);
             console.log("Presentation auto-ended. Duration:", result.duration_seconds, "seconds");
           } catch (err) {
             console.error("Error auto-ending presentation:", err);
@@ -349,7 +361,7 @@ function Presentations({ user }) {
       document.removeEventListener('webkitfullscreenchange', handleFullscreenChange);
       document.removeEventListener('msfullscreenchange', handleFullscreenChange);
     };
-  }, [presentationStarted, presentationId, user]);
+  }, [presentationStarted, presentationId, user, presentationOrder]);
 
   const goToNextSlide = () => {
     if (currentSlide < totalSlides) {
