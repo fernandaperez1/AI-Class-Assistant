@@ -45,6 +45,7 @@ user_states = {}  # format: {chat_id: {"action": "create_example", "presentation
 
 # Here I add all of the messages and delete them when the user leaves the pptx (need to add the queries to the ai to the db tho)
 active_presentation_messages = {}  # Format: {chat_id: message_id}
+active_preview_images = {}  #format: {chat_id: message_id}, using it for next slide preview images (will disable it if it makes the bot too slow)
 
 #global bot application reference (will be set in main(), but I needed to use it everywhere, ik its bad practice xd)
 bot_app = None
@@ -169,11 +170,173 @@ async def handle_presentation_ended(data):
         # Schedule the notification in the event loop
         asyncio.create_task(send_presentation_ended_notification(telegram_chat_id, duration))
 
+
+async def send_next_slide_preview(telegram_chat_id: int, presentation_id: int, next_slide_number: int):
+    """Send or update the next slide preview image"""
+    if not bot_app:
+        return
+    
+    try:
+        #get the image from backend (recycled the same endpoint as the front xd)
+        image_url = f"{BACKEND_API_URL}/api/presentations/{presentation_id}/slides/{next_slide_number}"
+        
+        resp = await asyncio.to_thread(
+            requests.get,
+            image_url,
+            timeout=10
+        )
+        
+        if not resp.ok:
+            return
+        
+        image_bytes = resp.content
+        caption = f"*Next Slide: {next_slide_number}*"
+        
+        #check if there's already a preview message
+        existing_message_id = active_preview_images.get(telegram_chat_id)
+        
+        if existing_message_id:
+            #delete it cz I dont have that much space in my phone
+            try:
+                await bot_app.bot.delete_message(
+                    chat_id=telegram_chat_id,
+                    message_id=existing_message_id
+                )
+            except Exception:
+                pass
+        
+        #send preview image
+        sent_message = await bot_app.bot.send_photo(
+            chat_id=telegram_chat_id,
+            photo=image_bytes,
+            caption=caption,
+            parse_mode='Markdown'
+        )
+        
+        #store the message ID (mushkaherramienta, I use it to delete the img)
+        active_preview_images[telegram_chat_id] = sent_message.message_id
+        
+    except Exception as e:
+        print(f"Error sending slide preview: {e}")
+
+
+async def delete_slide_preview(telegram_chat_id: int):
+    """Delete the slide preview image if it exists"""
+    if not bot_app:
+        return
+    
+    existing_message_id = active_preview_images.get(telegram_chat_id)
+    
+    if existing_message_id:
+        try:
+            await bot_app.bot.delete_message(
+                chat_id=telegram_chat_id,
+                message_id=existing_message_id
+            )
+        except Exception:
+            pass
+        
+        active_preview_images.pop(telegram_chat_id, None)
+
+
 @sio.on("presentation:update")
 async def handle_presentation_update(data):
     """Handle slide change updates"""
-    print("Presentation updated:", data)
-    # notify user of slide changes
+    try:
+        presentation_id = data.get("presentation_id")
+        current_slide = data.get("current_slide")
+        
+        if not presentation_id or current_slide is None:
+            return
+        
+        # Get presentation info to find the telegram chat
+        try:
+            resp = await asyncio.to_thread(
+                requests.get,
+                f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
+                timeout=5
+            )
+        except Exception as fetch_error:
+            print(f"Error fetching presentation: {fetch_error}")
+            return
+        
+        if not resp.ok:
+            return
+            
+        presentation_data = resp.json()
+        telegram_chat_id = presentation_data.get("presenter_chat_id")
+        slide_count = presentation_data.get("slide_count", 0)
+        
+        if not telegram_chat_id:
+            return
+        
+        #check if there's an active presentation message for this chat
+        message_id = active_presentation_messages.get(telegram_chat_id)
+        
+        if not message_id or not bot_app:
+            return
+        
+        # check if current slide is a quiz slide
+        try:
+            ai_slide = await asyncio.to_thread(
+                get_ai_slide_for_position,
+                presentation_id,
+                current_slide
+            )
+        except Exception:
+            ai_slide = None
+        
+        # Update the message with new slide number
+        message = (
+            "*---------------------------------------------------*\n*---------------------------------------------------*\n\n"
+            f"📍 *Slide {current_slide}*" + (f" / {slide_count}" if slide_count else "") + "\n\n"
+        )
+        
+        # add answer if this is a quiz slide
+        if ai_slide and ai_slide.get("answer"):
+            message += (
+                "*Quiz Slide Answer:*\n"
+                f"_{ai_slide.get('answer')}_\n\n"
+            )
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("⬅️ Previous", callback_data=f"nav:prev:{presentation_id}"),
+                InlineKeyboardButton("➡️ Next", callback_data=f"nav:next:{presentation_id}")
+            ],
+            [
+                InlineKeyboardButton("Go to Slide", callback_data=f"nav:goto:{presentation_id}")
+            ],
+            [
+                InlineKeyboardButton("AI Assistant", callback_data=f"ai:menu:{presentation_id}")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        try:
+            await bot_app.bot.edit_message_text(
+                chat_id=telegram_chat_id,
+                message_id=message_id,
+                text=message,
+                parse_mode='Markdown',
+                reply_markup=reply_markup
+            )
+        except Exception as edit_error:
+            # Check if error is because message content is the same (it happened because I was lagging, should not happen)
+            error_msg = str(edit_error)
+            if "message is not modified" not in error_msg.lower():
+                print(f"Error editing message: {edit_error}")
+        
+        # send next slide preview if not on last slide
+        if current_slide < slide_count:
+            await send_next_slide_preview(telegram_chat_id, presentation_id, current_slide + 1)
+        else:
+            await delete_slide_preview(telegram_chat_id)
+        
+    except Exception as e:
+        print(f"Error in handle_presentation_update: {e}")
+        import traceback
+        traceback.print_exc()
 
 # Helper to connect at startup with retry logic
 async def connect_socket():
@@ -238,6 +401,10 @@ async def send_presentation_active_notification(telegram_chat_id, presentation_i
         # storing message ID to edit/delete it when presentation ends
         active_presentation_messages[telegram_chat_id] = sent_message.message_id
         print(f"Sent presentation active notification to chat {telegram_chat_id}, message_id: {sent_message.message_id}")
+        
+        if current_slide < slide_count:
+            await send_next_slide_preview(telegram_chat_id, presentation_id, current_slide + 1)
+            
     except Exception as e:
         print(f"X Error sending notification: {e}")
 
@@ -287,6 +454,8 @@ async def send_presentation_ended_notification(telegram_chat_id: int, duration_s
                 text=message,
                 parse_mode='Markdown'
             )
+        
+        await delete_slide_preview(telegram_chat_id)
         
         # clear the user info for the AI bot when ending a presentation just in case
         user_states.pop(telegram_chat_id, None)
@@ -517,6 +686,24 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+def get_ai_slide_for_position(presentation_id: int, slide_index: int):
+    """Get AI slide data for a specific slide position"""
+    try:
+        resp = requests.get(
+            f"{BACKEND_API_URL}/api/presentations/{presentation_id}/ai-slides",
+            timeout=5
+        )
+        
+        if resp.ok:
+            ai_slides = resp.json()
+            for slide in ai_slides:
+                if slide.get("slide_index") == slide_index:
+                    return slide
+        return None
+    except Exception:
+        return None
+
+
 async def show_navigation_menu(query, presentation_id: int):
     """Show the main navigation menu"""
     try:
@@ -578,41 +765,8 @@ async def handle_nav_next(query, presentation_id: int):
         )
         
         if resp.ok:
-            data = resp.json()
-            current_slide = data.get("current_slide", 1)
-            
-            # Get presentation info to show total slides
-            pres_resp = requests.get(
-                f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
-                timeout=5
-            )
-            slide_count = pres_resp.json().get("slide_count", 0) if pres_resp.ok else 0
-            
-            # Update message with navigation buttons
-            message = (
-                "*---------------------------------------------------*\n*---------------------------------------------------*\n\n"
-                f"📍 *Slide {current_slide}*" + (f" / {slide_count}" if slide_count else "") + "\n\n"
-            )
-            
-            keyboard = [
-                [
-                    InlineKeyboardButton("⬅️ Previous", callback_data=f"nav:prev:{presentation_id}"),
-                    InlineKeyboardButton("➡️ Next", callback_data=f"nav:next:{presentation_id}")
-                ],
-                [
-                    InlineKeyboardButton("Go to Slide", callback_data=f"nav:goto:{presentation_id}")
-                ],
-                [
-                    InlineKeyboardButton("AI Assistant", callback_data=f"ai:menu:{presentation_id}")
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text(
-                message,
-                parse_mode='Markdown',
-                reply_markup=reply_markup
-            )
+            # just says ok, let the WebSocket handler update the message, this was causing a race condition
+            await query.answer()
         else:
             await query.answer("Could not navigate to next slide.", show_alert=True)
     except Exception as e:
@@ -633,41 +787,10 @@ async def handle_nav_prev(query, presentation_id: int):
         )
         
         if resp.ok:
-            data = resp.json()
-            current_slide = data.get("current_slide", 1)
-            
-            # Get presentation info to show total slides
-            pres_resp = requests.get(
-                f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
-                timeout=5
-            )
-            slide_count = pres_resp.json().get("slide_count", 0) if pres_resp.ok else 0
-            
-            # Update message with navigation buttons
-            message = (
-                "*---------------------------------------------------*\n*---------------------------------------------------*\n\n"
-                f"📍 *Slide {current_slide}*" + (f" / {slide_count}" if slide_count else "") + "\n\n"
-            )
-            
-            keyboard = [
-                [
-                    InlineKeyboardButton("⬅️ Previous", callback_data=f"nav:prev:{presentation_id}"),
-                    InlineKeyboardButton("➡️ Next", callback_data=f"nav:next:{presentation_id}")
-                ],
-                [
-                    InlineKeyboardButton("Go to Slide", callback_data=f"nav:goto:{presentation_id}")
-                ],
-                [
-                    InlineKeyboardButton("AI Assistant", callback_data=f"ai:menu:{presentation_id}")
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await query.edit_message_text(
-                message,
-                parse_mode='Markdown',
-                reply_markup=reply_markup
-            )
+            # Just acknowledge - let the WebSocket handler update the message
+            # This prevents race conditions where both this function and the WebSocket
+            # event try to update the message with potentially different slide numbers
+            await query.answer()
         else:
             await query.answer("Could not navigate to previous slide.", show_alert=True)
     except Exception as e:
@@ -1046,6 +1169,21 @@ async def handle_option_selection(query, context, presentation_id: int, option_i
                 parse_mode='Markdown',
                 reply_markup=reply_markup
             )
+            
+            # in case the user adds a new AI slide, send the new slide img
+            try:
+                pres_resp = requests.get(
+                    f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
+                    timeout=5
+                )
+                if pres_resp.ok:
+                    current_slide = pres_resp.json().get("current_slide", 1)
+                    if current_slide < new_slide_count:
+                        await send_next_slide_preview(chat_id, presentation_id, current_slide + 1)
+                    else:
+                        await delete_slide_preview(chat_id)
+            except Exception as preview_error:
+                print(f"Error updating preview after slide insertion: {preview_error}")
             
             #clear user state
             user_states.pop(chat_id, None)
@@ -1453,22 +1591,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             if resp.ok:
-                data = resp.json()
-                current_slide = data.get("current_slide", slide_number)
-                
-                pres_resp = requests.get(
-                    f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
-                    timeout=5
-                )
-                slide_count = pres_resp.json().get("slide_count", 0) if pres_resp.ok else 0
-                
-                await show_controls(chat_id, presentation_id, current_slide, slide_count, context)
+                # Just acknowledge - the WebSocket handler will update the message
+                await update.message.reply_text(f"✅ Jumping to slide {slide_number}...")
             else:
                 await update.message.reply_text("❌ Could not jump to that slide.")
-                pres_resp = requests.get(f"{BACKEND_API_URL}/api/presentations/{presentation_id}", timeout=5)
-                if pres_resp.ok:
-                    pres_data = pres_resp.json()
-                    await show_controls(chat_id, presentation_id, pres_data.get("current_slide", 1), pres_data.get("slide_count", 0), context)
             
             context.user_data['waiting_for_slide_number'] = False
             context.user_data.pop('goto_presentation_id', None)
@@ -1479,30 +1605,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Please send a valid slide number (e.g., `5`).",
                 parse_mode='Markdown'
             )
-            # show controls when the input is bad
-            presentation_id = context.user_data.get('goto_presentation_id')
-            if presentation_id:
-                try:
-                    pres_resp = requests.get(f"{BACKEND_API_URL}/api/presentations/{presentation_id}", timeout=5)
-                    if pres_resp.ok:
-                        pres_data = pres_resp.json()
-                        await show_controls(chat_id, presentation_id, pres_data.get("current_slide", 1), pres_data.get("slide_count", 0), context)
-                except:
-                    pass
             return
         except Exception as e:
             print(f"Error in goto: {e}")
             await update.message.reply_text("Ooops, Error connecting to backend.")
-            # the user can still use the control even if it fails, to keep the illusion xd
-            presentation_id = context.user_data.get('goto_presentation_id')
-            if presentation_id:
-                try:
-                    pres_resp = requests.get(f"{BACKEND_API_URL}/api/presentations/{presentation_id}", timeout=5)
-                    if pres_resp.ok:
-                        pres_data = pres_resp.json()
-                        await show_controls(chat_id, presentation_id, pres_data.get("current_slide", 1), pres_data.get("slide_count", 0), context)
-                except:
-                    pass
             context.user_data['waiting_for_slide_number'] = False
             return
     
