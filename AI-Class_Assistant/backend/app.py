@@ -5,7 +5,7 @@ from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
 from db import database as db
 from pptx_utils import extract_text_from_pptx, convert_pptx_to_pdf, get_slide_count, convert_pptx_to_images
-from ai_utils import generate_question_slide, generate_example_slide, read_presentation, add_slide
+from ai_utils import generate_question_slide, generate_example_slide, generate_summary_slide, read_presentation, add_slide
 import shutil
 from pptx import Presentation as PptxPresentation #only using it as fallback
 import traceback
@@ -1036,6 +1036,65 @@ def create_quiz_alternatives():
         return jsonify({"error": str(e)}), 500
 
 
+@app.route("/api/ai/create-summary", methods=["POST"])
+def create_summary():
+    """
+    Generate an informative summary based on slide content up to current position
+    Returns 3 summary options for the user to choose from
+    """
+    try:
+        if not GOOGLE_API_KEY:
+            return jsonify({"error": "AI service not configured"}), 500
+        
+        data = request.json
+        presentation_id = data.get("presentation_id")
+        slide_number = data.get("slide_number")
+        telegram_chat_id = data.get("telegram_chat_id")
+        user_input = data.get("user_input", "")
+        
+        print(f"AI: Creating summary for presentation {presentation_id}, slide {slide_number}")
+        
+        presentation = db.get_presentation_by_id(presentation_id)
+        if not presentation:
+            return jsonify({"error": "Presentation not found"}), 404
+        
+        class_info = db.get_class_by_id(presentation.get("class_id"))
+        class_language = class_info.get("class_language") if class_info else None
+        
+        pptx_path = presentation.get("original_pptx_path")
+        if not pptx_path or not os.path.exists(pptx_path):
+            return jsonify({"error": "PPTX file not found"}), 404
+        
+        prs, content = read_presentation(pptx_path)
+        
+        #generate summaries using AI
+        ai_response = generate_summary_slide(
+            api_key=GOOGLE_API_KEY,
+            presentation_content=content,
+            user_input=user_input,
+            slide_index=slide_number,
+            language=class_language
+        )
+        
+        options = [opt.strip() for opt in ai_response.split("[next]") if opt.strip()]
+        
+        while len(options) < 3:
+            options.append(f"Summary option {len(options) + 1} - Please request again for more variety")
+        options = options[:3]
+        
+        return jsonify({
+            "presentation_id": presentation_id,
+            "slide_number": slide_number,
+            "options": options,
+            "user_input": user_input
+        }), 200
+        
+    except Exception as e:
+        print(f"Error creating summary: {e}")
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/ai/insert-slide", methods=["POST"])
 def insert_slide():
     """
@@ -1100,6 +1159,8 @@ def insert_slide():
             question_type_format = "multiple-choice"
         elif slide_type == "example":
             question_type_format = "example"
+        elif slide_type == "summary":
+            question_type_format = "example"  # Use same formatting as examples
         
         # Add the slide (appends to end)
         print(f"[AI INSERT] Calling add_slide() with title='{slide_title}', type='{question_type_format}'")

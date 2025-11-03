@@ -647,6 +647,8 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await handle_ai_menu(query, presentation_id)
             elif action == "create_example":
                 await handle_ai_create_example(query, presentation_id)
+            elif action == "create_summary":
+                await handle_ai_create_summary(query, presentation_id)
             elif action == "create_quiz":
                 await handle_ai_create_quiz(query, presentation_id)
             elif action == "create_quiz_alt":
@@ -829,6 +831,9 @@ async def handle_ai_menu(query, presentation_id: int):
             InlineKeyboardButton("Create Example", callback_data=f"ai:create_example:{presentation_id}")
         ],
         [
+            InlineKeyboardButton("Create Summary", callback_data=f"ai:create_summary:{presentation_id}")
+        ],
+        [
             InlineKeyboardButton("❓ Create Quiz", callback_data=f"ai:create_quiz:{presentation_id}")
         ],
         [
@@ -881,6 +886,51 @@ async def handle_ai_create_example(query, presentation_id: int):
     
     keyboard = [
         [InlineKeyboardButton("⏭️ Skip (No Context)", callback_data=f"skip:example:{presentation_id}")],
+        [InlineKeyboardButton("❌ Cancel", callback_data=f"ai:menu:{presentation_id}")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        message,
+        parse_mode='Markdown',
+        reply_markup=reply_markup
+    )
+
+
+async def handle_ai_create_summary(query, presentation_id: int):
+    """Handle AI create summary request - prompt user for optional input"""
+    chat_id = query.message.chat_id
+    # get current slide
+    try:
+        resp = requests.get(
+            f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
+            timeout=5
+        )
+        current_slide = 1
+        if resp.ok:
+            current_slide = resp.json().get("current_slide", 1)
+    except:
+        current_slide = 1
+    
+    # Set user state to wait for input
+    user_states[chat_id] = {
+        "action": "create_summary",
+        "presentation_id": presentation_id,
+        "slide": current_slide
+    }
+    
+    message = (
+        f"*Create Summary (Slide {current_slide})*\n\n"
+        "I'll generate an informative summary of all content up to this slide.\n\n"
+        "You can provide optional context:\n\n"
+        "• Send a text message with specific focus areas\n"
+        "  Example: \"focus on key concepts and practical applications\"\n\n"
+        "• OR type `/skip` for a general summary\n\n"
+        "I'll generate 3 different summary perspectives."
+    )
+    
+    keyboard = [
+        [InlineKeyboardButton("⏭️ Skip (No Context)", callback_data=f"skip:summary:{presentation_id}")],
         [InlineKeyboardButton("❌ Cancel", callback_data=f"ai:menu:{presentation_id}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1005,6 +1055,10 @@ async def handle_skip_input(query, context, presentation_id: int, action_type: s
             endpoint = "/api/ai/create-example"
             slide_type = "example"
             title_prefix = "Examples"
+        elif action_type == "summary":
+            endpoint = "/api/ai/create-summary"
+            slide_type = "summary"
+            title_prefix = "Summary"
         elif action_type == "quiz":
             endpoint = "/api/ai/create-quiz"
             slide_type = "quiz"
@@ -1124,6 +1178,8 @@ async def handle_option_selection(query, context, presentation_id: int, option_i
         # put the slide title
         if slide_type == "example":
             slide_title = "AI Example"
+        elif slide_type == "summary":
+            slide_title = "AI Summary"
         elif slide_type == "quiz":
             slide_title = "AI Quiz ❓"
         elif slide_type == "quiz-alternatives":
@@ -1558,6 +1614,102 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     user_states.pop(chat_id, None)
             except Exception as e:
                 print(f"Error creating quiz: {e}")
+                import traceback
+                traceback.print_exc()
+                await update.message.reply_text("❌ Error connecting to backend.")
+                user_states.pop(chat_id, None)
+            
+            return
+        
+        elif action == "create_summary":
+            try:
+                user_input, input_type, transcription = await extract_user_input_from_message(update)
+            except TranscriptionError as exc:
+                await update.message.reply_text(f"Could not transcribe the audio: {exc}")
+                return
+            
+            if not user_input:
+                await update.message.reply_text("Please send a text or voice message with your context, or use the Skip button.")
+                return
+
+            if input_type == "audio" and transcription:
+                await update.message.reply_text(build_transcription_preview(transcription))
+
+            await update.message.reply_text("Generating summaries...\n\n_This may take a few seconds_", parse_mode='Markdown')
+            
+            try:
+                payload = {
+                    "presentation_id": presentation_id,
+                    "slide_number": slide,
+                    "telegram_chat_id": chat_id,
+                    "user_input": user_input,
+                    "input_type": input_type
+                }
+                if transcription:
+                    payload["transcription_language"] = transcription.language
+                    payload["transcription_confidence"] = transcription.confidence
+                media_file_id = None
+                if update.message.voice:
+                    media_file_id = update.message.voice.file_id
+                elif update.message.audio:
+                    media_file_id = update.message.audio.file_id
+                if media_file_id:
+                    payload["voice_file_id"] = media_file_id
+                
+                ai_resp = requests.post(
+                    f"{BACKEND_API_URL}/api/ai/create-summary",
+                    json=payload,
+                    timeout=60
+                )
+                
+                if ai_resp.ok:
+                    result = ai_resp.json()
+                    options = result.get("options", [])
+                    
+                    if len(options) < 3:
+                        await update.message.reply_text(
+                            "❌ AI returned fewer than 3 options. Please try again."
+                        )
+                        user_states.pop(chat_id, None)
+                        return
+                    
+                    message = (
+                        f"*Summary for Slide {slide}*\n\n"
+                        "*Generated 3 summary perspectives. Choose one to add to your presentation:*\n\n"
+                        f"*Option 1:*\n{options[0][:300]}{'...' if len(options[0]) > 300 else ''}\n\n"
+                        f"*Option 2:*\n{options[1][:300]}{'...' if len(options[1]) > 300 else ''}\n\n"
+                        f"*Option 3:*\n{options[2][:300]}{'...' if len(options[2]) > 300 else ''}\n\n"
+                    )
+                    
+                    user_states[chat_id] = {
+                        "action": "select_summary",
+                        "presentation_id": presentation_id,
+                        "slide": slide,
+                        "options": options,
+                        "slide_type": "summary",
+                        "user_input": user_input,
+                        "input_type": input_type
+                    }
+                    
+                    keyboard = [
+                        [InlineKeyboardButton("✅ Choose Option 1",callback_data=f"select:0:{presentation_id}")],
+                        [InlineKeyboardButton("✅ Choose Option 2",callback_data=f"select:1:{presentation_id}")],
+                        [InlineKeyboardButton("✅ Choose Option 3",callback_data=f"select:2:{presentation_id}")],
+                        [InlineKeyboardButton("🔄 Generate New Options",callback_data=f"skip:summary:{presentation_id}")],
+                        [InlineKeyboardButton("❌ Cancel",callback_data=f"ai:menu:{presentation_id}")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    await update.message.reply_text(
+                        message,
+                        parse_mode='Markdown',
+                        reply_markup=reply_markup
+                    )
+                else:
+                    await update.message.reply_text("❌ Failed to generate summaries. Please try again.")
+                    user_states.pop(chat_id, None)
+            except Exception as e:
+                print(f"Error creating summary: {e}")
                 import traceback
                 traceback.print_exc()
                 await update.message.reply_text("❌ Error connecting to backend.")

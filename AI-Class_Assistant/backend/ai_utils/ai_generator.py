@@ -115,6 +115,48 @@ def generate_example_slide(api_key, presentation_content, user_input, slide_inde
     return response.text
 
 
+def generate_summary_slide(api_key, presentation_content, user_input, slide_index, language=None):
+    """
+    Generates an informative summary using the Gemini API based on presentation content up to slide_index.
+    Args:
+        api_key: Google API key
+        presentation_content: List of slide content strings
+        user_input: User's optional context (can be empty)
+        slide_index: Index of current slide
+        language: Optional language to use for the summary (e.g., "English", "Spanish")
+    Returns:
+        String containing 3 different summary perspectives separated by [next]
+    """
+    client = genai.Client(api_key=api_key)
+    
+    query_data = "\n\n".join(presentation_content[:slide_index])
+    
+    if not user_input or len(user_input) < 2:
+        user_input = "no user input"
+
+    language_instruction = ""
+    if language:
+        language_instruction = f"Write the summary in {language}. "
+    else:
+        language_instruction = "Write in the same tone and language style as the presentation slides. "
+
+    query_base = (
+        f"You will receive presentation slides and need to generate exactly 3 informative summaries. "
+        f"Each summary should provide a different perspective or focus on the content covered so far: "
+        f"1) A comprehensive overview of all key concepts, "
+        f"2) A focus on the most important takeaways and practical applications, "
+        f"3) A structured outline of the main topics and subtopics covered. "
+        f"Each summary must be clear, educational, and informative for students reviewing the material. "
+        f"Keep each summary under 700 characters. {language_instruction}"
+        f"Separate summaries with [next], with no titles, numbering, or extra formatting. "
+        f"Output only the summaries."
+    )
+    query = query_base + "\nUser input:\n" + user_input + "\n\nPresentation content:\n" + query_data
+    print(f"[AI] Generating summary for slide {slide_index}")
+    response = client.models.generate_content(model="gemini-2.0-flash-exp", contents=query)
+    return response.text
+
+
 def read_presentation(pptx_path):
     prs = Presentation(pptx_path)
     content = []
