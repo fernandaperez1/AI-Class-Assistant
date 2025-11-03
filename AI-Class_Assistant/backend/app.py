@@ -169,7 +169,8 @@ def create_class():
             user_id=data["user_id"],
             subject=data["subject"],
             difficulty_level=data["difficulty_level"],
-            class_name=data.get("class_name")
+            class_name=data.get("class_name"),
+            class_language=data.get("class_language")
         )
         return jsonify(new_class), 201
     except Exception as e:
@@ -869,6 +870,10 @@ def create_example():
         if not presentation:
             return jsonify({"error": "Presentation not found"}), 404
         
+        #class info to retrieve language
+        class_info = db.get_class_by_id(presentation.get("class_id"))
+        class_language = class_info.get("class_language") if class_info else None
+        
         pptx_path = presentation.get("original_pptx_path")
         if not pptx_path or not os.path.exists(pptx_path):
             return jsonify({"error": "PPTX file not found"}), 404
@@ -881,7 +886,8 @@ def create_example():
             api_key=GOOGLE_API_KEY,
             presentation_content=content,
             user_input=user_input,
-            slide_index=slide_number
+            slide_index=slide_number,
+            language=class_language
         )
         
         # Split options
@@ -928,6 +934,9 @@ def create_quiz():
         if not presentation:
             return jsonify({"error": "Presentation not found"}), 404
         
+        class_info = db.get_class_by_id(presentation.get("class_id"))
+        class_language = class_info.get("class_language") if class_info else None
+        
         pptx_path = presentation.get("original_pptx_path")
         if not pptx_path or not os.path.exists(pptx_path):
             return jsonify({"error": "PPTX file not found"}), 404
@@ -941,7 +950,8 @@ def create_quiz():
             presentation_content=content,
             user_input=user_input,
             slide_index=slide_number,
-            question_type="open-ended"
+            question_type="open-ended",
+            language=class_language
         )
         
         # Split options (each contains question + [Question Result:] + answer)
@@ -986,6 +996,9 @@ def create_quiz_alternatives():
         if not presentation:
             return jsonify({"error": "Presentation not found"}), 404
         
+        class_info = db.get_class_by_id(presentation.get("class_id"))
+        class_language = class_info.get("class_language") if class_info else None
+        
         pptx_path = presentation.get("original_pptx_path")
         if not pptx_path or not os.path.exists(pptx_path):
             return jsonify({"error": "PPTX file not found"}), 404
@@ -999,7 +1012,8 @@ def create_quiz_alternatives():
             presentation_content=content,
             user_input=user_input,
             slide_index=slide_number,
-            question_type="multiple-choice"
+            question_type="multiple-choice",
+            language=class_language
         )
         
         # Split options
