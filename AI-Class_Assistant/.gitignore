@@ -2,6 +2,7 @@
 *node_modules
 *__pycache__
 *.pptx
+*venv
 backend/uploads/*
 !backend/uploads/README.md
 !backend/uploads/.gitkeep
