@@ -26,6 +26,7 @@ CREATE TABLE classes (
     class_name VARCHAR(255),  -- Optional
     subject VARCHAR(100) NOT NULL,  -- e.g., 'Math', 'Physics', 'Chemistry'
     difficulty_level VARCHAR(50) NOT NULL,  -- e.g., 'Beginner', 'Intermediate', 'Advanced'
+    class_language VARCHAR(50),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

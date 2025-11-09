@@ -7,6 +7,7 @@ export default function CreateClassModal({ userId, onClose, onClassCreated }) {
     class_name: "",
     subject: "",
     difficulty_level: "",
+    class_language: "",
     pptx_file: null,
   });
 
@@ -41,6 +42,7 @@ export default function CreateClassModal({ userId, onClose, onClassCreated }) {
           class_name: formData.class_name,
           subject: formData.subject,
           difficulty_level: formData.difficulty_level,
+          class_language: formData.class_language || null,
           user_id: userId,
         }),
       });
@@ -115,6 +117,23 @@ export default function CreateClassModal({ userId, onClose, onClassCreated }) {
               <option value="Beginner">Beginner</option>
               <option value="Intermediate">Intermediate</option>
               <option value="Advanced">Advanced</option>
+            </select>
+          </label>
+
+          <label>
+            Language
+            <select
+              name="class_language"
+              value={formData.class_language}
+              onChange={handleChange}
+            >
+              <option value="">Auto-detect from slides</option>
+              <option value="English">English</option>
+              <option value="Spanish">Spanish</option>
+              <option value="French">French</option>
+              <option value="German">German</option>
+              <option value="Portuguese">Portuguese</option>
+              <option value="Italian">Italian</option>
             </select>
           </label>
 

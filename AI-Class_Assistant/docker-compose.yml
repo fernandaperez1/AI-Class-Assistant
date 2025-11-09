@@ -14,6 +14,8 @@ services:
       - pg_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    networks:
+      - app_network
 
   backend:
     build: ./backend
@@ -26,6 +28,8 @@ services:
       - "5000:5000"
     depends_on:
       - db
+    networks:
+      - app_network
 
   bot:
     build: ./bot
@@ -34,16 +38,51 @@ services:
       - ./bot/.env
     depends_on:
       - backend
+    networks:
+      - app_network
 
   frontend:
     build: ./frontend
     container_name: class_frontend
     env_file:
       - ./frontend/.env
-    ports:
-      - "5173:5173"
+    expose:
+      - "5173"
     depends_on:
       - backend
+    networks:
+      - app_network
+
+  nginx:
+    image: nginx:alpine
+    container_name: class_nginx
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./certbot/conf:/etc/letsencrypt:ro
+      - ./certbot/www:/var/www/certbot:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - app_network
+
+  certbot:
+    image: certbot/certbot
+    container_name: class_certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew; sleep 12h & wait $${!}; done;'"
+    networks:
+      - app_network
+
+networks:
+  app_network:
+    driver: bridge
 
 volumes:
   pg_data:
