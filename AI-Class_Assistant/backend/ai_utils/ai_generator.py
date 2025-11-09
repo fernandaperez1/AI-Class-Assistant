@@ -180,7 +180,17 @@ def add_slide(prs, title, body, question_type="question"):
     Returns:
         The created slide object
     """
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    # Find an available blank layout (prefer index 6, but fallback to last or first available)
+    num_layouts = len(prs.slide_layouts)
+    if num_layouts > 6:
+        layout_index = 6
+    elif num_layouts > 0:
+        # Try to use the last layout (often blank) or first one if only one exists
+        layout_index = num_layouts - 1
+    else:
+        raise ValueError("Presentation has no slide layouts available")
+    
+    slide = prs.slides.add_slide(prs.slide_layouts[layout_index])
     
     slide_width = prs.slide_width
     slide_height = prs.slide_height
