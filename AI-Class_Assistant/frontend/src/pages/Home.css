@@ -389,11 +389,18 @@
   display: inline-block;
 }
 
+.link-section-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
 
 .qr-container {
-  display: flex;
-  justify-content: center;
-  margin: 1.5rem 0;
+  flex-shrink: 0;
+  margin-left: 30px;
 }
 
 .qr-image {
