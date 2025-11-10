@@ -320,6 +320,7 @@
 .collapse-arrow {
   font-size: 1.5rem;
   transition: transform 0.2s ease;
+  margin-right: 1rem;
 }
 
 .create-class-button-wrapper {

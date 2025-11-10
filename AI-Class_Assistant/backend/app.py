@@ -883,7 +883,6 @@ def create_example():
         
         # Generate examples using AI (returns 3 options separated by [next])
         ai_response = generate_example_slide(
-            api_key=GOOGLE_API_KEY,
             presentation_content=content,
             user_input=user_input,
             slide_index=slide_number,
@@ -946,7 +945,6 @@ def create_quiz():
         
         # Generate quiz questions using AI
         ai_response = generate_question_slide(
-            api_key=GOOGLE_API_KEY,
             presentation_content=content,
             user_input=user_input,
             slide_index=slide_number,
@@ -1008,7 +1006,6 @@ def create_quiz_alternatives():
         
         # Generate multiple choice questions using AI
         ai_response = generate_question_slide(
-            api_key=GOOGLE_API_KEY,
             presentation_content=content,
             user_input=user_input,
             slide_index=slide_number,
