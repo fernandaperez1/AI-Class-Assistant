@@ -348,6 +348,9 @@ export default function HomePage({ user }) {
         <h3>{cls.class_name || "Untitled Class"}</h3>
         <p>Subject: {cls.subject}</p>
         <p>Difficulty: {cls.difficulty_level}</p>
+        {cls.class_language && (
+          <p>Language: {cls.class_language}</p>
+        )}
         {cls.presentation_id && cls.slide_count && (
           <p className="slide-info">Slides: {cls.slide_count}</p>
         )}

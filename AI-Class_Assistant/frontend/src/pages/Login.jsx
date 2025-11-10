@@ -72,7 +72,7 @@ export default function LoginPage() {
   return (
     <div className="login-page">
       <div className="login-card">
-        <h1 className="login-title">Welcome to Class Assistant</h1>
+        <h1 className="login-title">Welcome to TutorFlow!</h1>
         <p className="login-subtitle">
           Your AI-powered educational assistant for interactive learning
         </p>
@@ -88,8 +88,8 @@ export default function LoginPage() {
         </button>
 
         <p className="login-info">
-          Sign in to create classes, interact with AI-generated content, and
-          link your Telegram account
+          Sign in to create classes, control them with a Telegram bot,
+          and create AI-generated content
         </p>
       </div>
     </div>
