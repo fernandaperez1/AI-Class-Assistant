@@ -388,6 +388,18 @@
   display: inline-block;
 }
 
+.qr-container {
+  display: flex;
+  justify-content: center;
+  margin: 1.5rem 0;
+}
+
+.qr-image {
+  width: 100%;
+  max-width: 220px;
+  height: auto;
+}
+
 /* Responsiveness */
 @media (max-width: 768px) {
   .features-grid {

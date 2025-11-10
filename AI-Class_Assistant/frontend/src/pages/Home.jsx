@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { API_URL } from "../config";
 import socket from "../sockets/socket";
 import "./Home.css";
+import qrcode from "../assets/qr_code.png";
 
 export default function HomePage({ user }) {
   const [linkCode, setLinkCode] = useState(null);
@@ -278,6 +279,14 @@ export default function HomePage({ user }) {
                       Link your Telegram account to interact with the bot during
                       presentations.
                     </p>
+
+                    <div className="qr-container">
+                      <img
+                        src={qrcode}
+                        alt="Telegram Bot QR"
+                        className="qr-image"
+                      />
+                    </div>
 
                     {!linkCode ? (
                       <button
