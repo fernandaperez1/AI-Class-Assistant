@@ -4,6 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { API_URL } from "../config";
 import socket from "../sockets/socket";
 import "./Home.css";
+import qrcode from "../assets/qr_code_no_bg.png";
 
 export default function HomePage({ user }) {
   const [linkCode, setLinkCode] = useState(null);
@@ -297,18 +298,28 @@ export default function HomePage({ user }) {
                           </div>
                         </div>
 
-                        <div className="instructions">
-                          <h4>How to link:</h4>
-                          <ol>
-                            <li>
-                              Open Telegram and search for{" "}
-                              <strong>@ClassAssistantBot</strong>
-                            </li>
-                            <li>Start a chat with the bot</li>
-                            <li>
-                              Send: <code>/link {linkCode}</code>
-                            </li>
-                          </ol>
+                        <div className="link-section-container">
+                            <div className="instructions">
+                                <h4>How to link:</h4>
+                                <ol>
+                                    <li>
+                                        Scan the QR code or open Telegram and search for{" "}
+                                        <strong>@TutorsFlow_Bot</strong>
+                                    </li>
+                                    <li>Start a chat with the bot</li>
+                                    <li>
+                                        Send: <code>/link {linkCode}</code>
+                                    </li>
+                                </ol>
+                            </div>
+
+                            <div className="qr-container">
+                                <img
+                                    src={qrcode}
+                                    alt="Telegram Bot QR"
+                                    className="qr-image"
+                                />
+                            </div>
                         </div>
 
                         <button
@@ -348,6 +359,9 @@ export default function HomePage({ user }) {
         <h3>{cls.class_name || "Untitled Class"}</h3>
         <p>Subject: {cls.subject}</p>
         <p>Difficulty: {cls.difficulty_level}</p>
+        {cls.class_language && (
+          <p>Language: {cls.class_language}</p>
+        )}
         {cls.presentation_id && cls.slide_count && (
           <p className="slide-info">Slides: {cls.slide_count}</p>
         )}

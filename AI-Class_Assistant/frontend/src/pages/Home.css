@@ -320,6 +320,7 @@
 .collapse-arrow {
   font-size: 1.5rem;
   transition: transform 0.2s ease;
+  margin-right: 1rem;
 }
 
 .create-class-button-wrapper {
@@ -386,6 +387,26 @@
   background: #f0f4ff;
   border-radius: 4px;
   display: inline-block;
+}
+
+.link-section-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+.qr-container {
+  flex-shrink: 0;
+  margin-left: 30px;
+}
+
+.qr-image {
+  width: 100%;
+  max-width: 220px;
+  height: auto;
 }
 
 /* Responsiveness */

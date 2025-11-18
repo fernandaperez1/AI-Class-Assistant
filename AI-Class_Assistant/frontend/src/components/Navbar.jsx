@@ -24,15 +24,6 @@ export default function Navbar({ user }) {
           <span className="navbar-title">TutorFlow</span>
         </Link>
 
-        <div className="navbar-menu">
-          <Link className="nav-link" to="/home">
-            Home
-          </Link>
-          <Link className="nav-link" to="/chat">
-            Chat
-          </Link>
-        </div>
-
         <div className="navbar-user">
           <span className="user-email">
             {user?.email || "User"}

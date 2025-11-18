@@ -148,16 +148,16 @@ def unlink_telegram_account(telegram_chat_id):
         return dict(result) if result else None
 
 # Class operations
-def create_class(user_id, subject, difficulty_level, class_name=None):
+def create_class(user_id, subject, difficulty_level, class_name=None, class_language=None):
     """Create a new class"""
     with get_db_cursor() as cursor:
         cursor.execute(
             """
-            INSERT INTO classes (user_id, class_name, subject, difficulty_level)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id, user_id, class_name, subject, difficulty_level, created_at
+            INSERT INTO classes (user_id, class_name, subject, difficulty_level, class_language)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id, user_id, class_name, subject, difficulty_level, class_language, created_at
             """,
-            (user_id, class_name, subject, difficulty_level)
+            (user_id, class_name, subject, difficulty_level, class_language)
         )
         return dict(cursor.fetchone())
     
@@ -208,7 +208,7 @@ def get_class_by_id(class_id):
     with get_db_cursor() as cursor:
         cursor.execute(
             """
-            SELECT id, user_id, class_name, subject, difficulty_level,
+            SELECT id, user_id, class_name, subject, difficulty_level, class_language,
                    created_at, updated_at
             FROM classes
             WHERE id = %s
@@ -224,7 +224,7 @@ def get_user_classes(user_id):
     with get_db_cursor() as cursor:
         cursor.execute(
             """
-            SELECT c.id, c.user_id, c.class_name, c.subject, c.difficulty_level,
+            SELECT c.id, c.user_id, c.class_name, c.subject, c.difficulty_level, c.class_language,
                    c.created_at, c.updated_at,
                    p.id as presentation_id, p.slide_count, p.original_pptx_path
             FROM classes c
@@ -239,7 +239,7 @@ def get_user_classes(user_id):
 
 def update_class(class_id, **kwargs):
     """Update class fields"""
-    allowed_fields = {'class_name', 'subject', 'difficulty_level'}
+    allowed_fields = {'class_name', 'subject', 'difficulty_level', 'class_language'}
     update_fields = {k: v for k, v in kwargs.items() if k in allowed_fields}
     
     if not update_fields:

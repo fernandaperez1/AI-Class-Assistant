@@ -2,6 +2,9 @@
 *node_modules
 *__pycache__
 *.pptx
+*venv
+docker-compose.override.yml
+certbot/
 backend/uploads/*
 !backend/uploads/README.md
 !backend/uploads/.gitkeep

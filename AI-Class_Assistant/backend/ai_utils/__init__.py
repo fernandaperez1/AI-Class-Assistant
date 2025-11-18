@@ -1,6 +1,7 @@
 from .ai_generator import (
     generate_question_slide,
     generate_example_slide,
+    generate_summary_slide,
     read_presentation,
     add_slide
 )
@@ -8,6 +9,7 @@ from .ai_generator import (
 __all__ = [
     'generate_question_slide',
     'generate_example_slide',
+    'generate_summary_slide',
     'read_presentation',
     'add_slide'
 ]

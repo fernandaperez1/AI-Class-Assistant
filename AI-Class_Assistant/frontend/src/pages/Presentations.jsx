@@ -28,8 +28,31 @@ function Presentations({ user }) {
   const imageRef = useRef(null);
   const slideStartTimeRef = useRef(null); //track when current slide started
 
+  //update backend with current slide (so bot stays in sync)
+  const updateBackendSlide = async (slideNumber) => {
+    if (!presentationId || !presentationStarted) return;
+    
+    try {
+      const telegramChatId = user?.telegram_chat_id;
+      if (!telegramChatId) return; //only sync if Telegram is connected
+      
+      await fetch(`${API_URL}/api/presentations/${presentationId}/control`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'goto',
+          target_slide: slideNumber,
+          telegram_chat_id: telegramChatId
+        })
+      });
+    } catch (err) {
+      console.error('Error syncing slide to backend:', err);
+    }
+  };
+
   // calculate time spent per slide (I calc it sepparately, then we add it up in the next func)
-  const recordSlideVisit = (slideNumber) => {
+  // syncToBackend param prevents race condition when slide change comes from WebSocket
+  const recordSlideVisit = (slideNumber, syncToBackend = true) => {
     if (!presentationStarted) return; //this is the fix I did to the slide recording when not in fullscreen, need to test more
     const now=Date.now();
     const duration = slideStartTimeRef.current ? now - slideStartTimeRef.current : 0;
@@ -45,6 +68,11 @@ function Presentations({ user }) {
     });
     
     slideStartTimeRef.current = now;
+    
+    //only sync to backend if this is a local change (not from WebSocket, the bot does it auto in this case)
+    if (syncToBackend) {
+      updateBackendSlide(slideNumber);
+    }
   };
 
   //calc the time stats
@@ -173,7 +201,8 @@ function Presentations({ user }) {
     const handleUpdate = ({ presentation_id, current_slide }) => {
       if (presentation_id === presentationId) {
         console.log(`WebSocket update: moving to slide ${current_slide}`);
-        recordSlideVisit(current_slide);
+        //pass false to prevent syncing back to backend (avoid race condition)
+        recordSlideVisit(current_slide, false);
         setCurrentSlide(current_slide);
       }
     };
@@ -192,7 +221,8 @@ function Presentations({ user }) {
           setCurrentSlide(newCurrentSlide);
           
           if (presentationStarted) {
-            recordSlideVisit(newCurrentSlide);
+            //don't sync to backend x3, the insertion already updated backend
+            recordSlideVisit(newCurrentSlide, false);
           }
         }
 

@@ -8,4 +8,5 @@ requests
 python-telegram-bot==20.6
 eventlet
 google-genai
+openai
 textwrap3
