@@ -5,7 +5,7 @@ from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
 from db import database as db
 from pptx_utils import extract_text_from_pptx, convert_pptx_to_pdf, get_slide_count, convert_pptx_to_images
-from ai_utils import generate_question_slide, generate_example_slide, generate_summary_slide, read_presentation, add_slide
+from ai_utils import generate_question_slide, generate_example_slide, generate_summary_slide, generate_class_overview, read_presentation, add_slide
 import shutil
 from pptx import Presentation as PptxPresentation #only using it as fallback
 import traceback
@@ -809,6 +809,43 @@ def get_presentation_info(class_id):
         }), 200
     except Exception as e:
         print(f"Error getting presentation info: {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/classes/<int:class_id>/ai-overview", methods=["POST"])
+def generate_ai_overview(class_id):
+    """Generate AI-powered overview and feedback for the class presentation (this should count I think, like for the extra analytic)"""
+    try:
+        class_info=db.get_class_by_id(class_id)
+        if not class_info:
+            return jsonify({"error": "Class not found"}), 404
+
+        presentation = db.get_presentation_by_class_id(class_id)
+        if not presentation:
+            return jsonify({"error": "No presentation found for this class"}), 404
+        
+        pptx_path = presentation.get("original_pptx_path")
+        if not pptx_path or not os.path.exists(pptx_path):
+            return jsonify({"error": "PPTX file not found"}), 404
+        
+        _, presentation_content = read_presentation(pptx_path)
+
+        analytics = db.get_latest_presentation_analytics(presentation["id"])
+        ai_slides = db.get_presentation_ai_slides(presentation["id"])
+
+        print(f"[AI] Generating class overview for class {class_id}")
+        overview = generate_class_overview(
+            presentation_content=presentation_content,
+            analytics=analytics,
+            ai_slides_count=len(ai_slides),
+            class_info=class_info
+        )
+        
+        return jsonify(overview), 200
+        
+    except Exception as e:
+        print(f"Error generating AI overview: {e}")
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
 

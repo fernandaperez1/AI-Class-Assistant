@@ -248,6 +248,144 @@ Generate exactly 3 summaries with different perspectives."""
     return _call_ai_model(prompt)
 
 
+def generate_class_overview(presentation_content, analytics=None, ai_slides_count=0, class_info=None):
+    """
+    Generates an AI-powered overview of the class analyzing teaching effectiveness.
+    Provides one positive feedback and one improvement suggestion.
+    
+    Args:
+        presentation_content: List of slide content strings
+        analytics: Dict with analytics data (time_per_slide, slide_order, etc.)
+        ai_slides_count: Number of AI-generated slides
+        class_info: Dict with class information (name, subject, etc.)
+    
+    Returns:
+        Dict with 'positive_feedback' and 'improvement_suggestion' keys
+    """
+    # add some context (this will break if the prs is too long cz I only load the first 10 slides)
+    slides_summary = "\n\n".join(presentation_content[:10]) 
+    total_slides = len(presentation_content)
+    
+    analytics_context = ""
+    if analytics and analytics.get("time_per_slide"):
+        time_per_slide = analytics["time_per_slide"]
+        total_time_ms = analytics.get("total_time_ms", 0)
+        
+        times = list(time_per_slide.values())
+        avg_time = sum(times) / len(times) if times else 0
+        max_time_slide = max(time_per_slide.items(), key=lambda x: x[1]) if time_per_slide else None
+        min_time_slide = min(time_per_slide.items(), key=lambda x: x[1]) if time_per_slide else None
+        
+        slide_order = analytics.get("slide_order", [])
+        visit_count = {}
+        for entry in slide_order:
+            slide = entry.get("slide")
+            visit_count[slide] = visit_count.get(slide, 0) + 1
+        
+        revisited_slides = {k: v for k, v in visit_count.items() if v > 1}
+        
+        analytics_context = f"""
+PRESENTATION STATISTICS:
+- Total Duration: {total_time_ms / 1000:.1f} seconds ({total_time_ms / 60000:.1f} minutes)
+- Average Time per Slide: {avg_time / 1000:.1f} seconds
+- Slide with Most Time: Slide {max_time_slide[0]} ({max_time_slide[1] / 1000:.1f}s)
+- Slide with Least Time: Slide {min_time_slide[0]} ({min_time_slide[1] / 1000:.1f}s)
+- Slides Revisited: {len(revisited_slides)} slides
+- AI Interaction: {ai_slides_count} AI-generated content pieces
+- Total Slide Transitions: {len(slide_order)}
+"""
+    else:
+        analytics_context = "No presentation analytics available yet. This appears to be a new or unpresented class."
+    
+    # make the query context
+    class_context = ""
+    if class_info:
+        class_context = f"""
+CLASS INFORMATION:
+- Subject: {class_info.get('subject', 'Unknown')}
+- Difficulty Level: {class_info.get('difficulty_level', 'Unknown')}
+- Language: {class_info.get('class_language', 'Unknown')}
+"""
+    
+    prompt = f"""You are an expert educational consultant analyzing a classroom presentation. Based on the presentation content and delivery statistics, provide constructive feedback to help the teacher improve their teaching.
+
+{class_context}
+
+PRESENTATION CONTENT (Sample):
+Total Slides: {total_slides}
+{slides_summary}
+
+{analytics_context}
+
+TASK:
+Analyze this presentation and provide:
+
+1. ONE POSITIVE ASPECT: Identify one specific thing the teacher did well. This could be related to:
+   - Content organization and clarity
+   - Time management and pacing
+   - Use of interactive AI features
+   - Engagement techniques
+   - Coverage of material
+
+2. ONE IMPROVEMENT SUGGESTION: Identify one specific, actionable improvement. This could be related to:
+   - Slides that need more/less time based on complexity
+   - Pacing issues (too fast/slow on certain topics)
+   - Content that might benefit from more examples or clarification
+   - Better use of interactive features
+   - Navigation patterns that suggest confusion
+
+IMPORTANT:
+- Be specific and reference actual data (slide numbers, times, etc.)
+- Be constructive and encouraging
+- Focus on actionable insights
+- Keep each point concise (2-3 sentences max)
+- If no analytics are available, focus on content quality and structure
+
+Return your response in this exact format:
+POSITIVE: [your positive feedback here]
+IMPROVEMENT: [your improvement suggestion here]"""
+
+    print(f"[AI] Generating class overview using {AI_PROVIDER.upper()}")
+    
+    try:
+        response = _call_ai_model(prompt)
+        
+        lines = response.strip().split('\n')
+        positive = ""
+        improvement = ""
+        
+        for line in lines:
+            if line.startswith("POSITIVE:"):
+                positive = line.replace("POSITIVE:", "").strip()
+            elif line.startswith("IMPROVEMENT:"):
+                improvement = line.replace("IMPROVEMENT:", "").strip()
+        
+        # fallback 1
+        if not positive or not improvement:
+            parts = response.split("IMPROVEMENT:")
+            if len(parts) == 2:
+                positive = parts[0].replace("POSITIVE:", "").strip()
+                improvement = parts[1].strip()
+            else:
+                # fallback 2 xddd (vender humo)
+                positive = "The presentation shows good structure and content organization."
+                improvement = response.strip()
+        
+        return {
+            "positive_feedback": positive,
+            "improvement_suggestion": improvement,
+            "generated_at": time.time()
+        }
+    
+    except Exception as e:
+        print(f"[AI] Error generating class overview: {e}")
+        return {
+            "positive_feedback": "Unable to generate feedback at this time.",
+            "improvement_suggestion": "Please try again later.",
+            "error": str(e)
+        }
+
+
 def read_presentation(pptx_path):
     prs = Presentation(pptx_path)
     content = []

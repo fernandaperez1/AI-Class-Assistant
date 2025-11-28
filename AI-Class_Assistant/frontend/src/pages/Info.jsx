@@ -8,13 +8,41 @@ export default function InfoPage() {
   const [info, setInfo] = useState(null);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
-  const [expandedSections, setExpandedSections] = useState({details:true,analytics:true,aiSlides:true});
+  const [expandedSections, setExpandedSections] = useState({details:true,analytics:true,aiSlides:true,aiOverview:false});
+  const [aiOverview, setAiOverview] = useState(null);
+  const [loadingOverview, setLoadingOverview] = useState(false);
+  const [overviewError, setOverviewError] = useState(null);
 
   const toggleSection = (section) => {
     setExpandedSections(prev => ({
       ...prev,
       [section]: !prev[section]
     }));
+  };
+
+  const generateAIOverview = async () => {
+    setLoadingOverview(true);
+    setOverviewError(null);
+    
+    try {
+      const res = await fetch(`${API_URL}/api/classes/${classId}/ai-overview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to generate AI overview');
+      }
+      
+      const data = await res.json();
+      setAiOverview(data);
+    } catch (err) {
+      console.error('Error generating AI overview:', err);
+      setOverviewError(err.message);
+    } finally {
+      setLoadingOverview(false);
+    }
   };
 
   useEffect(() => {
@@ -100,13 +128,64 @@ export default function InfoPage() {
   return (
     <div className="info-page">
       <div className="info-container">
-        <h1>Presentation Info</h1>
+        <h1 className="page-title">Presentation Info</h1>
         {error && <p className="error-text">{error}</p>}
 
         {!info && !error && <p>Loading presentation info...</p>}
 
         {info && (
           <>
+            {/* AI Overview Section */}
+            <div className="info-card ai-overview-card">
+              <div className="card-header" onClick={() => toggleSection('aiOverview')}>
+                <h2>AI Teaching Insights</h2>
+                <span className="collapse-icon">{expandedSections.aiOverview ? '▼' : '▶'}</span>
+              </div>
+              {expandedSections.aiOverview && (
+              <div className="card-content">
+                {!aiOverview && (
+                  <div className="overview-prompt">
+                    <p>Get AI-powered feedback on your teaching performance and suggestions for improvement.</p>
+                    <button 
+                      className="generate-overview-button"
+                      onClick={generateAIOverview}
+                      disabled={loadingOverview}
+                    >
+                      {loadingOverview ? '🔄 Generating Insights...' : '✨ Generate AI Overview'}
+                    </button>
+                    {overviewError && (
+                      <p className="error-text" style={{marginTop: '10px'}}>
+                        Error: {overviewError}
+                      </p>
+                    )}
+                  </div>
+                )}
+                
+                {aiOverview && !aiOverview.error && (
+                  <div className="overview-results">
+                    <div className="feedback-section positive-feedback">
+                      <h3>✅ What You Did Well</h3>
+                      <p>{aiOverview.positive_feedback}</p>
+                    </div>
+                    
+                    <div className="feedback-section improvement-feedback">
+                      <h3>💡 Suggestion for Improvement</h3>
+                      <p>{aiOverview.improvement_suggestion}</p>
+                    </div>
+                    
+                    <button 
+                      className="regenerate-button"
+                      onClick={generateAIOverview}
+                      disabled={loadingOverview}
+                    >
+                      {loadingOverview ? 'Regenerating...' : '🔄 Regenerate Insights'}
+                    </button>
+                  </div>
+                )}
+              </div>
+              )}
+            </div>
+
             <div className="info-card">
               <div className="card-header" onClick={() => toggleSection('details')}>
                 <h2>Presentation Details</h2>
