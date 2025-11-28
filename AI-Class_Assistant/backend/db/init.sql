@@ -52,10 +52,15 @@ CREATE TABLE presentations (
 CREATE TABLE presentation_AI_slide (
     id SERIAL PRIMARY KEY,
     presentation_id INTEGER NOT NULL REFERENCES presentations(id) ON DELETE CASCADE,
-    slide_content TEXT NOT NULL,  -- The AI-generated slide content
+    slide_content TEXT NOT NULL,  -- The AI-generated slide content (selected option)
     user_input TEXT NOT NULL,     -- The user's original input/question
     answer TEXT,                  -- Optional: answer for quiz questions (NULL for examples)
     slide_index INTEGER,          -- The slide index where this was inserted
+    all_options JSONB,            -- All AI-generated options (array of strings)
+    selected_option_index INTEGER,  -- Index of the option selected by user (0-based)
+    slide_type VARCHAR(50),       -- Type: 'example', 'question', 'summary', 'multiple-choice'
+    generation_attempt INTEGER DEFAULT 1,  -- Which generation attempt (1 = first, 2+ = regenerations) (the idx was a pain to manage otherwise ffs)
+    all_attempts JSONB,           -- Array of all generation attempts: [{attempt: 1, options: [...], selected_index: 0}, ...]
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

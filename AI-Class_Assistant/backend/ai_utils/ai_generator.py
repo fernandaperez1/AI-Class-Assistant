@@ -114,6 +114,7 @@ REQUIREMENTS:
 - {language_instruction}
 - Format: Question text first, then options A-D, then [Question Result:] with answer
 - Separate the 3 questions with [next]
+- Do NOT number, label, or bullet the questions (no "Question 1:", "**Question 2:**", etc.)
 
 USER CONTEXT: {user_input}
 

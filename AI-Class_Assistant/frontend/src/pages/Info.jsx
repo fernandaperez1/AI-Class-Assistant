@@ -8,7 +8,7 @@ export default function InfoPage() {
   const [info, setInfo] = useState(null);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
-  const [expandedSections, setExpandedSections] = useState({details:true,analytics:true,aiSlides:true,aiOverview:false});
+  const [expandedSections, setExpandedSections] = useState({details:true,analytics:true,aiSlides:true,aiOverview:true});
   const [aiOverview, setAiOverview] = useState(null);
   const [loadingOverview, setLoadingOverview] = useState(false);
   const [overviewError, setOverviewError] = useState(null);
@@ -366,22 +366,81 @@ export default function InfoPage() {
                           <div className="ai-slide-header">
                             <span className="ai-slide-number">AI Slide #{index + 1}</span>
                             <span className="ai-slide-position">Position: {slide.slide_index}</span>
+                            {slide.slide_type && (
+                              <span className="ai-slide-type">{slide.slide_type}</span>
+                            )}
                             <span className="ai-slide-date">{formatTimestamp(slide.created_at)}</span>
                           </div>
                           
                           {slide.user_input && (
                             <div className="ai-slide-section">
-                              <h4>User Input:</h4>
-                              <p>{slide.user_input}</p>
+                              <h4>💬 User Context:</h4>
+                              <p className="user-context">{slide.user_input}</p>
                             </div>
                           )}
                           
-                          <div className="ai-slide-section">
-                            <h4>Generated Content:</h4>
-                            <div className="ai-slide-content">
-                              {slide.slide_content}
+                          {slide.all_attempts && slide.all_attempts.length > 0 ? (
+                            <div className="ai-slide-section">
+                              <h4>🔄 Generation Attempts ({slide.all_attempts.length}):</h4>
+                              {slide.all_attempts.map((attempt, attemptIdx) => (
+                                <div key={attemptIdx} className="attempt-group">
+                                  <div className="attempt-header">
+                                    <strong>Attempt {attempt.attempt}</strong>
+                                    {attempt.selected_index !== null && attempt.selected_index !== undefined && (
+                                      <span className="attempt-selected-badge">✓ Used This Attempt</span>
+                                    )}
+                                  </div>
+                                  <div className="ai-options-list">
+                                    {attempt.options && attempt.options.map((option, optIdx) => (
+                                      <div 
+                                        key={optIdx} 
+                                        className={`ai-option ${
+                                          optIdx === attempt.selected_index ? 'selected' : ''
+                                        }`}
+                                      >
+                                        <div className="option-header">
+                                          <span className="option-number">Option {optIdx + 1}</span>
+                                          {optIdx === attempt.selected_index && (
+                                            <span className="selected-badge">✓ Selected</span>
+                                          )}
+                                        </div>
+                                        <div className="option-content">{option}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          </div>
+                          ) : slide.all_options && slide.all_options.length > 0 ? (
+                            <div className="ai-slide-section">
+                              <h4>AI-Generated Options:</h4>
+                              <div className="ai-options-list">
+                                {slide.all_options.map((option, optIdx) => (
+                                  <div 
+                                    key={optIdx} 
+                                    className={`ai-option ${
+                                      optIdx === slide.selected_option_index ? 'selected' : ''
+                                    }`}
+                                  >
+                                    <div className="option-header">
+                                      <span className="option-number">Option {optIdx + 1}</span>
+                                      {optIdx === slide.selected_option_index && (
+                                        <span className="selected-badge">✓ Selected</span>
+                                      )}
+                                    </div>
+                                    <div className="option-content">{option}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="ai-slide-section">
+                              <h4>📝 Generated Content:</h4>
+                              <div className="ai-slide-content">
+                                {slide.slide_content}
+                              </div>
+                            </div>
+                          )}
                           
                           {slide.answer && (
                             <div className="ai-slide-section">

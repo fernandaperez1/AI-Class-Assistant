@@ -293,11 +293,20 @@ async def handle_presentation_update(data):
         )
         
         # add answer if this is a quiz slide
-        if ai_slide and ai_slide.get("answer"):
-            message += (
-                "*Quiz Slide Answer:*\n"
-                f"_{ai_slide.get('answer')}_\n\n"
-            )
+        if ai_slide:
+            slide_type = ai_slide.get("slide_type", "")
+            answer = ai_slide.get("answer")
+            
+            if answer:
+                # Show the quiz/question type and answer
+                type_label = "Quiz" if "quiz" in slide_type else "Question"
+                message += (
+                    f"*🎯 {type_label} Slide Answer:*\n"
+                    f"_{answer}_\n\n"
+                )
+            elif slide_type and "quiz" in slide_type:
+                # Quiz slide but no answer extracted (shouldnt happen but just in case)
+                message += "*🎯 Quiz Slide* (AI-generated)\n\n"
         
         keyboard = [
             [
@@ -1034,14 +1043,18 @@ async def handle_ai_create_quiz_alternatives(query, presentation_id: int):
 
 async def handle_skip_input(query, context, presentation_id: int, action_type: str):
     """
-    Handle when user clicks 'Skip (No Context)' button
-    Generates AI content without user input
+    Handle when user clicks 'Skip (No Context)' button or 'Generate New Options'
+    Preserves original user input when regenerating
     """
     chat_id = query.message.chat_id
     
-    # get user state to find current slide
+    # get user state to find current slide and preserve context
     state = user_states.get(chat_id, {})
     current_slide = state.get("slide", 1)
+    user_input = state.get("user_input", "")  # Preserve original context
+    input_type = state.get("input_type", "text")  # Preserve input type
+    generation_attempt = state.get("generation_attempt", 0) + 1  # Increment attempt
+    all_attempts = state.get("all_attempts", [])  # Preserve previous attempts
     
     # loading message
     await query.edit_message_text(
@@ -1071,14 +1084,15 @@ async def handle_skip_input(query, context, presentation_id: int, action_type: s
             await query.edit_message_text("❌ Invalid action type.")
             return
         
-        # call backend AI endpoint with empty user_input
+        # call backend AI endpoint with preserved user_input (from original request)
         ai_resp = requests.post(
             f"{BACKEND_API_URL}{endpoint}",
             json={
                 "presentation_id": presentation_id,
                 "slide_number": current_slide,
                 "telegram_chat_id": chat_id,
-                "user_input": ""  #no context
+                "user_input": user_input,  # Use preserved context from first attempt
+                "input_type": input_type
             },
             timeout=60
         )
@@ -1103,14 +1117,25 @@ async def handle_skip_input(query, context, presentation_id: int, action_type: s
                 f"*Option 3:*\n{options[2][:300]}{'...' if len(options[2]) > 300 else ''}\n\n"
             )
             
-            # update user state with options
+            # Save previous attempt before updating
+            if state.get("options"):
+                all_attempts.append({
+                    "attempt": generation_attempt - 1,
+                    "options": state.get("options", []),
+                    "selected_index": None  # Previous attempt wasn't selected
+                })
+            
+            # update user state with new options and preserved context
             user_states[chat_id] = {
                 "action": f"select_{action_type}",
                 "presentation_id": presentation_id,
                 "slide": current_slide,
                 "options": options,
                 "slide_type": slide_type,
-                "user_input": ""
+                "user_input": user_input,  # Preserve original context
+                "input_type": input_type,  # Preserve input type
+                "generation_attempt": generation_attempt,
+                "all_attempts": all_attempts
             }
             
             keyboard = [
@@ -1165,6 +1190,16 @@ async def handle_option_selection(query, context, presentation_id: int, option_i
         return
     
     selected_content = options[option_index]
+    generation_attempt = state.get("generation_attempt", 1)
+    all_attempts = state.get("all_attempts", [])
+    
+    # Add current attempt to all_attempts with selected index
+    current_attempt = {
+        "attempt": generation_attempt,
+        "options": options,
+        "selected_index": option_index
+    }
+    all_attempts_final = all_attempts + [current_attempt]
     
     #loading message
     await query.edit_message_text(
@@ -1197,7 +1232,11 @@ async def handle_option_selection(query, context, presentation_id: int, option_i
                 "slide_type": slide_type,
                 "insert_after": insert_after,
                 "user_input": user_input,
-                "telegram_chat_id": chat_id
+                "telegram_chat_id": chat_id,
+                "all_options": options,  # All AI-generated options from current attempt
+                "selected_option_index": option_index,  
+                "generation_attempt": generation_attempt,  
+                "all_attempts": all_attempts_final  # All attempts with options and selections
             },
             timeout=90  # need to test this, to see if its slower than the timeout
         )
@@ -1372,6 +1411,20 @@ async def show_controls(chat_id, presentation_id, current_slide=1, slide_count=0
         "*---------------------------------------------------*\n*---------------------------------------------------*\n\n"
         f"📍 *Slide {current_slide}*" + (f" / {slide_count}" if slide_count else "") + "\n\n"
     )
+    
+    ai_slide = get_ai_slide_for_position(presentation_id, current_slide)
+    if ai_slide:
+        slide_type = ai_slide.get("slide_type", "")
+        answer = ai_slide.get("answer")
+        
+        if answer:
+            type_label = "Quiz" if "quiz" in slide_type else "Question"
+            message += (
+                f"*🎯 {type_label} Slide Answer:*\n"
+                f"_{answer}_\n\n"
+            )
+        elif slide_type and "quiz" in slide_type:
+            message += "*🎯 Quiz Slide* (AI-generated)\n\n"
 
     keyboard = [
         [
@@ -1476,14 +1529,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "options": options,
                         "slide_type": "example",
                         "user_input": user_input,
-                        "input_type": input_type
+                        "input_type": input_type,
+                        "generation_attempt": 1,
+                        "all_attempts": []
                     }
                     
                     keyboard = [
                         [InlineKeyboardButton("✅ Choose Option 1", callback_data=f"select:0:{presentation_id}")],
                         [InlineKeyboardButton("✅ Choose Option 2", callback_data=f"select:1:{presentation_id}")],
                         [InlineKeyboardButton("✅ Choose Option 3", callback_data=f"select:2:{presentation_id}")],
-                        [InlineKeyboardButton("🔄 Generate New Options", callback_data=f"ai:create_example:{presentation_id}")],
+                        [InlineKeyboardButton("🔄 Generate New Options", callback_data=f"skip:example:{presentation_id}")],
                         [InlineKeyboardButton("❌ Cancel", callback_data=f"ai:menu:{presentation_id}")]
                     ]
                     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1592,7 +1647,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "options": options,
                         "slide_type": slide_type,
                         "user_input": user_input,
-                        "input_type": input_type
+                        "input_type": input_type,
+                        "generation_attempt": 1,
+                        "all_attempts": []
                     }
                     
                     keyboard = [
@@ -1688,7 +1745,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "options": options,
                         "slide_type": "summary",
                         "user_input": user_input,
-                        "input_type": input_type
+                        "input_type": input_type,
+                        "generation_attempt": 1,
+                        "all_attempts": []
                     }
                     
                     keyboard = [

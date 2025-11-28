@@ -614,7 +614,10 @@ def add_ai_slide_endpoint(presentation_id):
             slide_content=data["slide_content"],
             user_input=data["user_input"],
             answer=data.get("answer"),  # Optional for examples
-            slide_index=data.get("slide_index")
+            slide_index=data.get("slide_index"),
+            all_options=data.get("all_options"),  # All AI-generated options
+            selected_option_index=data.get("selected_option_index"),  # Which option was selected
+            slide_type=data.get("slide_type")  # Type of slide
         )
         return jsonify(ai_slide), 201
     except Exception as e:
@@ -1269,7 +1272,12 @@ def insert_slide():
             slide_content=slide_content_to_save,
             user_input=user_input,
             answer=answer,
-            slide_index=target_index + 1
+            slide_index=target_index + 1,
+            all_options=data.get("all_options"),  
+            selected_option_index=data.get("selected_option_index"), 
+            slide_type=question_type_format,
+            generation_attempt=data.get("generation_attempt", 1), 
+            all_attempts=data.get("all_attempts") 
         )
         print(f"[AI INSERT] Saved AI slide to database at position {target_index + 1} (type: {question_type_format})")
         print(f"[AI INSERT] Content length: {len(slide_content_to_save)}, Answer: {'Yes' if answer else 'None'}")

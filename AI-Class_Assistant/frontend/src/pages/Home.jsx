@@ -308,7 +308,10 @@ export default function HomePage({ user }) {
                                     </li>
                                     <li>Start a chat with the bot</li>
                                     <li>
-                                        Send: <code>/link {linkCode}</code>
+                                        Send: <code>/link</code>
+                                    </li>
+                                    <li>
+                                        Send: <code>{linkCode}</code>
                                     </li>
                                 </ol>
                             </div>
