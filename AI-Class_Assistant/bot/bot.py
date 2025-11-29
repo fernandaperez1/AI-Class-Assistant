@@ -569,7 +569,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• Access presentation materials\n\n"
             "*Commands:*\n"
             "• `/start` - Show welcome message\n"
-            "• `/help` - Show this help\n\n"
+            "• `/help` - Show this help\n"
+            "• `/unlink` - Disconnect from web account\n\n"
             "Need help? not my problem lol"
         )
     else:
@@ -1405,6 +1406,80 @@ def process_link_code(chat_id: int, link_code: str):
         }
 
 
+async def unlink_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /unlink command - unlink Telegram from web account"""
+    chat_id = update.effective_chat.id
+    
+    # Check if currently linked
+    try:
+        check_response = requests.get(
+            f"{BACKEND_API_URL}/api/telegram/check/{chat_id}",
+            timeout=5
+        )
+        
+        if check_response.status_code == 404:
+            await update.message.reply_text(
+                "*Not Linked*\n\n"
+                "Your Telegram account is not currently linked to any web account.\n\n"
+                "Use /link to connect your account.",
+                parse_mode='Markdown'
+            )
+            return
+    except Exception as e:
+        print(f"Error checking link status: {e}")
+        await update.message.reply_text(
+            "❌ Error checking account status. Please try again later."
+        )
+        return
+    
+    # Account is linked, proceed with unlinking (added a ton of edge cases just in case)
+    try:
+        unlink_response = requests.post(
+            f"{BACKEND_API_URL}/api/telegram/unlink",
+            json={"telegram_chat_id": chat_id},
+            timeout=10
+        )
+        
+        if unlink_response.status_code == 200:
+            await update.message.reply_text(
+                "✅ *Account Unlinked Successfully!*\n\n"
+                "Your Telegram account has been disconnected from the web app.\n\n"
+                "You can link it again anytime using /link",
+                parse_mode='Markdown'
+            )
+        elif unlink_response.status_code == 400:
+            await update.message.reply_text(
+                "❌ *Unlink Failed*\n\n"
+                "Could not unlink your account. It may already be unlinked.\n\n"
+                "Use /link to check your status.",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Failed to unlink account. Please try again later."
+            )
+            
+    except requests.exceptions.ConnectionError:
+        await update.message.reply_text(
+            "*Cannot connect to backend*\n\n"
+            "The server is currently unavailable. Please try again later.",
+            parse_mode='Markdown'
+        )
+    except requests.exceptions.Timeout:
+        await update.message.reply_text(
+            "*Request timed out*\n\n"
+            "The server is taking too long to respond. Please try again.",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        print(f"Error unlinking account: {e}")
+        import traceback
+        traceback.print_exc()
+        await update.message.reply_text(
+            "❌ An error occurred while unlinking. Please try again later."
+        )
+
+
 #got tired of copy pasting the controls xd
 async def show_controls(chat_id, presentation_id, current_slide=1, slide_count=0, context=None):
     message = (
@@ -2053,6 +2128,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("link", link_start))
+    app.add_handler(CommandHandler("unlink", unlink_account))
     app.add_handler(CommandHandler("start_presentation", start_presentation_cmd))
     app.add_handler(CommandHandler("end_presentation", end_presentation_cmd))
     app.add_handler(CommandHandler("next", next_slide_cmd))
