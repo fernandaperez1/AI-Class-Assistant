@@ -7,6 +7,7 @@ from google import genai
 from openai import OpenAI
 import os
 import time
+import re
 
 
 # AI Provider Configuration
@@ -15,6 +16,39 @@ GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY')
 OPENAI_API_KEY = os.getenv('OPENAI_API_KEY')
 AI_MAX_RETRIES = int(os.getenv('AI_MAX_RETRIES', '3'))  # Maximum retry attempts
 AI_RETRY_DELAY = float(os.getenv('AI_RETRY_DELAY', '2.0'))  # Delay between retries in seconds
+
+
+def detect_language_from_content(presentation_content, slide_index):
+    """
+    returns a language name like "English", "Spanish", "French", etc. I use AI for this aswell btw
+    """
+    # content from first few slides (up to current slide)
+    sample_text = "\n".join(presentation_content[:min(slide_index, 5)])
+    
+    sample_text = " ".join(sample_text.split())[:1000]
+    
+    if not sample_text.strip():
+        return "English"  # Default fallback
+    
+    prompt = f"""Analyze the following presentation text and identify its primary language.
+Respond with ONLY the language name in English (e.g., "English", "Spanish", "French", "German", "Portuguese", "Italian", "Chinese", "Japanese", etc.).
+Do not include any explanation or additional text.
+
+TEXT:
+{sample_text}
+
+LANGUAGE:"""
+    
+    try:
+        response = _call_ai_model(prompt).strip()
+        response = re.sub(r'["\']', '', response).strip()
+        #only the first word if multiple words returned
+        response = response.split()[0] if response else "English"
+        print(f"[AI] Detected presentation language: {response}")
+        return response
+    except Exception as e:
+        print(f"[AI] Language detection failed: {e}, defaulting to English")
+        return "English"
 
 
 def _call_ai_model(prompt, provider=None, retry_count=0):
@@ -96,12 +130,12 @@ def generate_question_slide(presentation_content, user_input, slide_index, quest
     # Combine content from slides up to current index
     query_data = "\n\n".join(presentation_content[:slide_index])
     
-    # Add language instruction if provided
-    language_instruction = ""
-    if language:
-        language_instruction = f"The question and the response must be in {language}. "
-    else:
-        language_instruction = "The question and the response must match the language used in the presentation slides. "
+    # Auto-detect language if not provided
+    if not language:
+        language = detect_language_from_content(presentation_content, slide_index)
+    
+    # Add language instruction
+    language_instruction = f"The question and the response must be in {language}. "
     
     if question_type == "multiple-choice":
         prompt = f"""Create 3 multiple-choice quiz questions based on the presentation content below.
@@ -169,11 +203,10 @@ def generate_example_slide(presentation_content, user_input, slide_index, langua
     if not user_input or len(user_input) < 2:
         user_input = "no specific requirements provided"
 
-    language_instruction = ""
-    if language:
-        language_instruction = f"Write the examples in {language}. "
-    else:
-        language_instruction = "Write in the same tone and language style as the presentation slides. "
+    if not language:
+        language = detect_language_from_content(presentation_content, slide_index)
+    
+    language_instruction = f"Write the examples in {language}. "
 
     prompt = f"""Generate 3 clear, concrete examples that help students understand the key concepts from the presentation.
 
@@ -217,11 +250,10 @@ def generate_summary_slide(api_key, presentation_content, user_input, slide_inde
     if not user_input or len(user_input) < 2:
         user_input = "no specific requirements provided"
 
-    language_instruction = ""
-    if language:
-        language_instruction = f"Write the summary in {language}. "
-    else:
-        language_instruction = "Write in the same tone and language style as the presentation slides. "
+    if not language:
+        language = detect_language_from_content(presentation_content, slide_index)
+
+    language_instruction = f"Write the summary in {language}. "
 
     prompt = f"""Generate 3 informative summaries of the presentation content, each with a different perspective.
 
@@ -402,6 +434,7 @@ def add_slide(prs, title, body, question_type="question"):
     """
     Adds a professionally designed slide to the presentation with improved layout and text fitting.
     Features gradient background, proper text wrapping, and automatic font sizing.
+    Creates slides completely from scratch without inheriting any layout styles (inheriting was a pain so I removed it).
     
     Args:
         prs: Presentation object
@@ -412,26 +445,38 @@ def add_slide(prs, title, body, question_type="question"):
     Returns:
         The created slide object
     """
-    # Find an available blank layout
-    num_layouts = len(prs.slide_layouts)
-    if num_layouts > 6:
-        layout_index = 6
-    elif num_layouts > 0:
-        layout_index = num_layouts - 1
-    else:
-        raise ValueError("Presentation has no slide layouts available")
+    # get a blank layout, not from the existing ones
+    blank_layout = prs.slide_layouts[6] if len(prs.slide_layouts) > 6 else prs.slide_layouts[0]
+    slide = prs.slides.add_slide(blank_layout)
     
-    slide = prs.slides.add_slide(prs.slide_layouts[layout_index])
+    # Remove ALL inherited shapes and placeholders from the layout
+    shapes_to_remove = list(slide.shapes)
+    
+    for shape in shapes_to_remove:
+        try:
+            sp = shape.element
+            sp.getparent().remove(sp)
+        except:
+            #try diff way to remove
+            try:
+                slide.shapes._spTree.remove(shape.element)
+            except:
+                pass
     
     slide_width = prs.slide_width
     slide_height = prs.slide_height
     
-    #added margin cz the original ones did not work
-    side_margin = Inches(0.75)
-    top_margin = Inches(0.5)
-    title_height = Inches(0.8)
-    spacing = Inches(0.15)
-    bottom_margin = Inches(0.6)
+    # Calculate proportional sizing based on slide dimensions
+    # using 16:9 standard (10" x 5.625") as baseline
+    baseline_height = Inches(5.625)
+    size_ratio = slide_height / baseline_height
+    
+    # Margins - proportional to slide height
+    side_margin = slide_width * 0.056
+    top_margin = slide_height * 0.089
+    title_height = slide_height * 0.142
+    spacing = slide_height * 0.027
+    bottom_margin = slide_height * 0.107
     
     #gradient background
     slide.background.fill.gradient()
@@ -440,10 +485,11 @@ def add_slide(prs, title, body, question_type="question"):
     slide.background.fill.gradient_stops[1].color.rgb = RGBColor(0, 0, 0)
     
     #accent bar at top to id the type of slide
+    accent_bar_height = slide_height * 0.027
     accent_bar = slide.shapes.add_shape(
         1,  #rectangle
         0, 0,
-        slide_width, Inches(0.15)
+        slide_width, accent_bar_height
     )
     accent_bar.fill.solid()
     
@@ -470,7 +516,7 @@ def add_slide(prs, title, body, question_type="question"):
     title_p = title_tf.paragraphs[0]
     title_p.text = title
     title_p.font.name = "Segoe UI"
-    title_p.font.size = Pt(36)
+    title_p.font.size = Pt(int(36 * size_ratio))  # Scale title font
     title_p.font.bold = True
     title_p.font.color.rgb = RGBColor(255, 255, 255)
     title_p.alignment = PP_ALIGN.LEFT
@@ -486,10 +532,10 @@ def add_slide(prs, title, body, question_type="question"):
     content_tf = content_box.text_frame
     content_tf.word_wrap = True
     content_tf.vertical_anchor = MSO_ANCHOR.TOP
-    content_tf.margin_left = Pt(12)
-    content_tf.margin_right = Pt(12)
-    content_tf.margin_top = Pt(12)
-    content_tf.margin_bottom = Pt(12)
+    content_tf.margin_left = Pt(int(12 * size_ratio))
+    content_tf.margin_right = Pt(int(12 * size_ratio))
+    content_tf.margin_top = Pt(int(12 * size_ratio))
+    content_tf.margin_bottom = Pt(int(12 * size_ratio))
     
     lines = []
     is_multiple_choice = question_type.lower() in ["multiple-choice", "alternatives"]
@@ -510,18 +556,34 @@ def add_slide(prs, title, body, question_type="question"):
     total_chars = sum(len(line["text"]) for line in lines)
     num_original_lines = len(lines)
 
-    if total_chars < 200:
-        font_size = 24
-    elif total_chars < 400:
-        font_size = 20
-    elif total_chars < 600:
-        font_size = 18
-    elif total_chars < 800:
-        font_size = 16
-    elif total_chars < 1000:
-        font_size = 14
+    # Base font sizes scaled by slide dimensions
+    # Multiple choice questions need smaller fonts due to more line breaks, this one needs more testing
+    if is_multiple_choice:
+        if total_chars < 200:
+            base_font_size = 20
+        elif total_chars < 400:
+            base_font_size = 18
+        elif total_chars < 600:
+            base_font_size = 16
+        elif total_chars < 800:
+            base_font_size = 14
+        else:
+            base_font_size = 12
     else:
-        font_size = 12
+        if total_chars < 200:
+            base_font_size = 24
+        elif total_chars < 400:
+            base_font_size = 20
+        elif total_chars < 600:
+            base_font_size = 18
+        elif total_chars < 800:
+            base_font_size = 16
+        elif total_chars < 1000:
+            base_font_size = 14
+        else:
+            base_font_size = 12
+    
+    font_size = int(base_font_size * size_ratio)
     
     for i, line_data in enumerate(lines):
         if i == 0:
@@ -538,13 +600,13 @@ def add_slide(prs, title, body, question_type="question"):
         
         if line_data["is_option"]:
             # Style for multiple choice options
-            p.space_before = Pt(8) 
-            p.space_after = Pt(2)
+            p.space_before = Pt(int(8 * size_ratio))
+            p.space_after = Pt(int(2 * size_ratio))
             p.font.bold = False
         else:
             # Style for regular text - minimal spacing
             p.space_before = Pt(0)
-            p.space_after = Pt(6)
+            p.space_after = Pt(int(6 * size_ratio))
     
     print(f"[AI] Professional slide added: '{title}' | Font: {font_size}pt | Lines: {num_original_lines} | Type: {question_type}")
     return slide

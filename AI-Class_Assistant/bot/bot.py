@@ -17,6 +17,7 @@ from telegram.ext import (
     filters, 
     ContextTypes
 )
+from telegram.helpers import escape_markdown
 from transcription import TranscriptionError, TranscriptionResult, TranscriptionService
 
 load_dotenv()
@@ -1119,12 +1120,19 @@ async def handle_skip_input(query, context, presentation_id: int, action_type: s
                 return
             
             # show the 3 options as buttons
+            # Escape markdown characters in AI-generated text
+            opt1_escaped = escape_markdown(options[0][:300], version=2)
+            opt2_escaped = escape_markdown(options[1][:300], version=2)
+            opt3_escaped = escape_markdown(options[2][:300], version=2)
+            
+            ellipsis = '\\.\\.\\.'
+            
             message = (
                 f"*{title_prefix} for Slide {current_slide}*\n\n"
-                "*Generated 3 options. Choose one to add to your presentation:*\n\n"
-                f"*Option 1:*\n{options[0][:300]}{'...' if len(options[0]) > 300 else ''}\n\n"
-                f"*Option 2:*\n{options[1][:300]}{'...' if len(options[1]) > 300 else ''}\n\n"
-                f"*Option 3:*\n{options[2][:300]}{'...' if len(options[2]) > 300 else ''}\n\n"
+                "*Generated 3 options\\. Choose one to add to your presentation:*\n\n"
+                f"*Option 1:*\n{opt1_escaped}{ellipsis if len(options[0]) > 300 else ''}\n\n"
+                f"*Option 2:*\n{opt2_escaped}{ellipsis if len(options[1]) > 300 else ''}\n\n"
+                f"*Option 3:*\n{opt3_escaped}{ellipsis if len(options[2]) > 300 else ''}\n\n"
             )
             
             # Save previous attempt before updating
@@ -1159,7 +1167,7 @@ async def handle_skip_input(query, context, presentation_id: int, action_type: s
             
             await query.edit_message_text(
                 message,
-                parse_mode='Markdown',
+                parse_mode='MarkdownV2',
                 reply_markup=reply_markup
             )
         else:
