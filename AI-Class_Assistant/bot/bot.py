@@ -330,17 +330,20 @@ async def handle_presentation_update(data):
                 parse_mode='Markdown',
                 reply_markup=reply_markup
             )
+            
+            # Only send preview if we successfully edited the message
+            # (fixed this cz I ended up having dup images, this only should send an image when editing the control, not when deleting the old one and creating a new one)
+            if current_slide < slide_count:
+                await send_next_slide_preview(telegram_chat_id, presentation_id, current_slide + 1)
+            else:
+                await delete_slide_preview(telegram_chat_id)
+                
         except Exception as edit_error:
-            # Check if error is because message content is the same (it happened because I was lagging, should not happen)
             error_msg = str(edit_error)
             if "message is not modified" not in error_msg.lower():
                 print(f"Error editing message: {edit_error}")
-        
-        # send next slide preview if not on last slide
-        if current_slide < slide_count:
-            await send_next_slide_preview(telegram_chat_id, presentation_id, current_slide + 1)
-        else:
-            await delete_slide_preview(telegram_chat_id)
+            if "message to edit not found" in error_msg.lower() or "message can't be edited" in error_msg.lower():
+                active_presentation_messages.pop(telegram_chat_id, None)
         
     except Exception as e:
         print(f"Error in handle_presentation_update: {e}")
@@ -719,6 +722,8 @@ def get_ai_slide_for_position(presentation_id: int, slide_index: int):
 async def show_navigation_menu(query, presentation_id: int):
     """Show the main navigation menu"""
     try:
+        chat_id = query.message.chat_id
+        
         # Get current presentation info
         resp = requests.get(
             f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
@@ -759,6 +764,10 @@ async def show_navigation_menu(query, presentation_id: int):
             parse_mode='Markdown',
             reply_markup=reply_markup
         )
+        
+        # Store the message ID so WebSocket can update it (added it to keep track of the control thingy)
+        active_presentation_messages[chat_id] = query.message.message_id
+        
     except Exception as e:
         print(f"Error showing navigation menu: {e}")
         await query.edit_message_text("Error loading navigation menu.")
@@ -1482,6 +1491,10 @@ async def unlink_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 #got tired of copy pasting the controls xd
 async def show_controls(chat_id, presentation_id, current_slide=1, slide_count=0, context=None):
+    if not bot_app:
+        print(f"[show_controls] ERROR: bot_app is None, cannot send controls")
+        return
+        
     message = (
         "*---------------------------------------------------*\n*---------------------------------------------------*\n\n"
         f"📍 *Slide {current_slide}*" + (f" / {slide_count}" if slide_count else "") + "\n\n"
@@ -1515,12 +1528,15 @@ async def show_controls(chat_id, presentation_id, current_slide=1, slide_count=0
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await context.bot.send_message(
+    sent_message = await bot_app.bot.send_message(
         chat_id=chat_id,
         text=message,
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
+    
+    # Store the new message ID so it can be deleted later
+    active_presentation_messages[chat_id] = sent_message.message_id
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle regular messages"""
@@ -1550,6 +1566,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if input_type == "audio" and transcription:
                 await update.message.reply_text(build_transcription_preview(transcription))
+
+            #delete old control message and preview image before showing loading
+            old_message_id = active_presentation_messages.get(chat_id)
+            if old_message_id and bot_app:
+                try:
+                    await bot_app.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=old_message_id
+                    )
+                    active_presentation_messages.pop(chat_id, None)
+                except Exception:
+                    pass
+            
+            # Delete old preview image too
+            await delete_slide_preview(chat_id)
 
             await update.message.reply_text("Generating examples...\n\n_This may take a few seconds_", parse_mode='Markdown')
             try:
@@ -1660,6 +1691,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if input_type == "audio" and transcription:
                 await update.message.reply_text(build_transcription_preview(transcription))
 
+            # Delete old control message and preview image before showing loading
+            old_message_id = active_presentation_messages.get(chat_id)
+            if old_message_id and bot_app:
+                try:
+                    await bot_app.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=old_message_id
+                    )
+                    active_presentation_messages.pop(chat_id, None)
+                except Exception:
+                    pass
+            
+            # Delete old preview image too
+            await delete_slide_preview(chat_id)
+
             await update.message.reply_text("Generating quiz questions...\n\n_This may take a few seconds_", parse_mode='Markdown')
             
             try:
@@ -1766,6 +1812,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if input_type == "audio" and transcription:
                 await update.message.reply_text(build_transcription_preview(transcription))
+
+            #same shit as before
+            old_message_id = active_presentation_messages.get(chat_id)
+            if old_message_id and bot_app:
+                try:
+                    await bot_app.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=old_message_id
+                    )
+                    active_presentation_messages.pop(chat_id, None)
+                except Exception:
+                    pass
+            
+            await delete_slide_preview(chat_id)
 
             await update.message.reply_text("Generating summaries...\n\n_This may take a few seconds_", parse_mode='Markdown')
             
@@ -1877,8 +1937,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             if resp.ok:
-                # Just acknowledge - the WebSocket handler will update the message
+                # Delete the old control message first (this is the whole process I added to fix the control positioning)
+                old_message_id = active_presentation_messages.get(chat_id)
+                if old_message_id and bot_app:
+                    try:
+                        await bot_app.bot.delete_message(
+                            chat_id=chat_id,
+                            message_id=old_message_id
+                        )
+                        active_presentation_messages.pop(chat_id, None)
+                    except Exception:
+                        pass
+                
+                # Delete the old preview image too
+                await delete_slide_preview(chat_id)
+                
+                # Acknowledge the jump
                 await update.message.reply_text(f"✅ Jumping to slide {slide_number}...")
+                
+                # Get presentation info and send new control at bottom
+                try:
+                    pres_resp = requests.get(
+                        f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
+                        timeout=5
+                    )
+                    if pres_resp.ok:
+                        pres_data = pres_resp.json()
+                        current_slide = pres_data.get("current_slide", slide_number)
+                        slide_count = pres_data.get("slide_count", 0)
+                        
+                        # Send new control panel
+                        await show_controls(chat_id, presentation_id, current_slide, slide_count, context)
+                        
+                        # Then send next slide preview after control (so control is above preview)
+                        if current_slide < slide_count:
+                            await send_next_slide_preview(chat_id, presentation_id, current_slide + 1)
+                except Exception as e:
+                    print(f"Error refreshing controls after goto: {e}")
             else:
                 await update.message.reply_text("❌ Could not jump to that slide.")
             
