@@ -225,6 +225,25 @@
   max-width: 500px;
 }
 
+.back-button {
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 24px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 1rem;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+.back-button:hover {
+  background: #5567d3;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
 @media (max-width: 768px) {
   .presentation-top-bar {
     flex-direction: column;
