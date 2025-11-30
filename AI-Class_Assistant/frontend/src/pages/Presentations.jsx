@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import "./Presentations.css";
 import socket from "../sockets/socket";
 import { 
@@ -13,6 +13,7 @@ import { API_URL } from "../config";
 
 function Presentations({ user }) {
   const { classId } = useParams();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [converting, setConverting] = useState(false);
   const [error, setError] = useState(null);
@@ -456,6 +457,9 @@ function Presentations({ user }) {
   return (
     <div className="presentation-wrapper">
       <div className="presentation-top-bar">
+        <button onClick={() => navigate('/home')} className="control-btn back-btn">
+          ← Back to Home
+        </button>
         {!user?.telegram_chat_id && (
           <div className="telegram-notice">
             ℹ️ <strong>Tip:</strong> Link your Telegram account on the Home page to control presentations from your phone and use AI features!
