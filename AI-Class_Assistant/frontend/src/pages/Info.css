@@ -193,7 +193,6 @@
   user-select: none;
   padding: 0.5rem 1.5rem;
   transition: opacity 0.2s ease;
-  margin-bottom: 1.5rem;
 }
 
 .card-header:hover {
@@ -598,6 +597,7 @@
 }
 
 .overview-results {
+  margin-top: 1.5rem;
   animation: fadeIn 0.5s ease-in;
 }
 
