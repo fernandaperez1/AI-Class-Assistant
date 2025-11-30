@@ -103,6 +103,7 @@
   gap: 10px;
   position: relative;
   height: 24px;
+  padding-left: 4px;
 }
 
 .percentage-fill {
@@ -182,7 +183,7 @@
   box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
-/* Collapsible Sections (this is the shit that looks horrible) */
+/* Collapsible Sections (this is the shit that looks horrible) .-. horrible dice */
 .card-header {
   display: flex;
   justify-content: space-between;
@@ -190,8 +191,9 @@
   align-items: center;
   cursor: pointer;
   user-select: none;
-  padding: 0.5rem 0;
+  padding: 0.5rem 1.5rem;
   transition: opacity 0.2s ease;
+  margin-bottom: 1.5rem;
 }
 
 .card-header:hover {
@@ -200,11 +202,12 @@
 
 .card-header h2 {
   margin: 0;
+  color: white;
 }
 
 .collapse-icon {
   font-size: 1.2rem;
-  color: #667eea;
+  color: #ffffff;
   font-weight: bold;
   transition: transform 0.3s ease;
 }
