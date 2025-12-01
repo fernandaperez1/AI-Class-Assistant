@@ -395,17 +395,24 @@ def end_presentation(presentation_id):
 
 
 # AI Slide operations
-def add_ai_slide(presentation_id, slide_content, user_input, answer=None, slide_index=None):
+def add_ai_slide(presentation_id, slide_content, user_input, answer=None, slide_index=None, 
+                all_options=None, selected_option_index=None, slide_type=None,
+                generation_attempt=1, all_attempts=None):
     """Add an AI-generated slide (example or question) to a presentation"""
+    import json
     with get_db_cursor() as cursor:
         cursor.execute(
             """
             INSERT INTO presentation_AI_slide 
-            (presentation_id, slide_content, user_input, answer, slide_index)
-            VALUES (%s, %s, %s, %s, %s)
-            RETURNING id, presentation_id, slide_content, user_input, answer, slide_index, created_at
+            (presentation_id, slide_content, user_input, answer, slide_index, 
+             all_options, selected_option_index, slide_type, generation_attempt, all_attempts)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, presentation_id, slide_content, user_input, answer, slide_index, 
+                      all_options, selected_option_index, slide_type, generation_attempt, all_attempts, created_at
             """,
-            (presentation_id, slide_content, user_input, answer, slide_index)
+            (presentation_id, slide_content, user_input, answer, slide_index,
+             json.dumps(all_options) if all_options else None, selected_option_index, slide_type,
+             generation_attempt, json.dumps(all_attempts) if all_attempts else None)
         )
         return dict(cursor.fetchone())
 
@@ -415,7 +422,8 @@ def get_presentation_ai_slides(presentation_id):
     with get_db_cursor() as cursor:
         cursor.execute(
             """
-            SELECT id, presentation_id, slide_content, user_input, answer, slide_index, created_at
+            SELECT id, presentation_id, slide_content, user_input, answer, slide_index, 
+                   all_options, selected_option_index, slide_type, generation_attempt, all_attempts, created_at
             FROM presentation_AI_slide
             WHERE presentation_id = %s
             ORDER BY created_at ASC

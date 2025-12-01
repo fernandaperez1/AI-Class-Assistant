@@ -111,6 +111,17 @@
   box-shadow: 0 4px 12px rgba(244, 67, 54, 0.4);
 }
 
+.back-btn {
+  background: rgba(34, 34, 34, 0.7);
+  color: white;
+}
+
+.back-btn:hover {
+  background: rgba(78, 78, 78, 0.7);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 102, 102, 0.3);
+}
+
 .pdf-viewer {
   flex: 1;
   width: 100%;
@@ -223,6 +234,25 @@
 .presentation-placeholder p {
   color: #aaa;
   max-width: 500px;
+}
+
+.back-button {
+  background: #667eea;
+  color: white;
+  border: none;
+  border-radius: 12px;
+  padding: 12px 24px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 1rem;
+  transition: all 0.3s ease;
+  box-shadow: 0 2px 8px rgba(102, 126, 234, 0.3);
+}
+
+.back-button:hover {
+  background: #5567d3;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
 }
 
 @media (max-width: 768px) {

@@ -17,6 +17,7 @@ from telegram.ext import (
     filters, 
     ContextTypes
 )
+from telegram.helpers import escape_markdown
 from transcription import TranscriptionError, TranscriptionResult, TranscriptionService
 
 load_dotenv()
@@ -293,11 +294,20 @@ async def handle_presentation_update(data):
         )
         
         # add answer if this is a quiz slide
-        if ai_slide and ai_slide.get("answer"):
-            message += (
-                "*Quiz Slide Answer:*\n"
-                f"_{ai_slide.get('answer')}_\n\n"
-            )
+        if ai_slide:
+            slide_type = ai_slide.get("slide_type", "")
+            answer = ai_slide.get("answer")
+            
+            if answer:
+                # Show the quiz/question type and answer
+                type_label = "Quiz" if "quiz" in slide_type else "Question"
+                message += (
+                    f"*🎯 {type_label} Slide Answer:*\n"
+                    f"_{answer}_\n\n"
+                )
+            elif slide_type and "quiz" in slide_type:
+                # Quiz slide but no answer extracted (shouldnt happen but just in case)
+                message += "*🎯 Quiz Slide* (AI-generated)\n\n"
         
         keyboard = [
             [
@@ -321,17 +331,20 @@ async def handle_presentation_update(data):
                 parse_mode='Markdown',
                 reply_markup=reply_markup
             )
+            
+            # Only send preview if we successfully edited the message
+            # (fixed this cz I ended up having dup images, this only should send an image when editing the control, not when deleting the old one and creating a new one)
+            if current_slide < slide_count:
+                await send_next_slide_preview(telegram_chat_id, presentation_id, current_slide + 1)
+            else:
+                await delete_slide_preview(telegram_chat_id)
+                
         except Exception as edit_error:
-            # Check if error is because message content is the same (it happened because I was lagging, should not happen)
             error_msg = str(edit_error)
             if "message is not modified" not in error_msg.lower():
                 print(f"Error editing message: {edit_error}")
-        
-        # send next slide preview if not on last slide
-        if current_slide < slide_count:
-            await send_next_slide_preview(telegram_chat_id, presentation_id, current_slide + 1)
-        else:
-            await delete_slide_preview(telegram_chat_id)
+            if "message to edit not found" in error_msg.lower() or "message can't be edited" in error_msg.lower():
+                active_presentation_messages.pop(telegram_chat_id, None)
         
     except Exception as e:
         print(f"Error in handle_presentation_update: {e}")
@@ -560,7 +573,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "• Access presentation materials\n\n"
             "*Commands:*\n"
             "• `/start` - Show welcome message\n"
-            "• `/help` - Show this help\n\n"
+            "• `/help` - Show this help\n"
+            "• `/unlink` - Disconnect from web account\n\n"
             "Need help? not my problem lol"
         )
     else:
@@ -709,6 +723,8 @@ def get_ai_slide_for_position(presentation_id: int, slide_index: int):
 async def show_navigation_menu(query, presentation_id: int):
     """Show the main navigation menu"""
     try:
+        chat_id = query.message.chat_id
+        
         # Get current presentation info
         resp = requests.get(
             f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
@@ -749,6 +765,10 @@ async def show_navigation_menu(query, presentation_id: int):
             parse_mode='Markdown',
             reply_markup=reply_markup
         )
+        
+        # Store the message ID so WebSocket can update it (added it to keep track of the control thingy)
+        active_presentation_messages[chat_id] = query.message.message_id
+        
     except Exception as e:
         print(f"Error showing navigation menu: {e}")
         await query.edit_message_text("Error loading navigation menu.")
@@ -1034,14 +1054,18 @@ async def handle_ai_create_quiz_alternatives(query, presentation_id: int):
 
 async def handle_skip_input(query, context, presentation_id: int, action_type: str):
     """
-    Handle when user clicks 'Skip (No Context)' button
-    Generates AI content without user input
+    Handle when user clicks 'Skip (No Context)' button or 'Generate New Options'
+    Preserves original user input when regenerating
     """
     chat_id = query.message.chat_id
     
-    # get user state to find current slide
+    # get user state to find current slide and preserve context
     state = user_states.get(chat_id, {})
     current_slide = state.get("slide", 1)
+    user_input = state.get("user_input", "")  # Preserve original context
+    input_type = state.get("input_type", "text")  # Preserve input type
+    generation_attempt = state.get("generation_attempt", 0) + 1  # Increment attempt
+    all_attempts = state.get("all_attempts", [])  # Preserve previous attempts
     
     # loading message
     await query.edit_message_text(
@@ -1071,14 +1095,15 @@ async def handle_skip_input(query, context, presentation_id: int, action_type: s
             await query.edit_message_text("❌ Invalid action type.")
             return
         
-        # call backend AI endpoint with empty user_input
+        # call backend AI endpoint with preserved user_input (from original request)
         ai_resp = requests.post(
             f"{BACKEND_API_URL}{endpoint}",
             json={
                 "presentation_id": presentation_id,
                 "slide_number": current_slide,
                 "telegram_chat_id": chat_id,
-                "user_input": ""  #no context
+                "user_input": user_input,  # Use preserved context from first attempt
+                "input_type": input_type
             },
             timeout=60
         )
@@ -1095,22 +1120,40 @@ async def handle_skip_input(query, context, presentation_id: int, action_type: s
                 return
             
             # show the 3 options as buttons
+            # Escape markdown characters in AI-generated text
+            opt1_escaped = escape_markdown(options[0][:300], version=2)
+            opt2_escaped = escape_markdown(options[1][:300], version=2)
+            opt3_escaped = escape_markdown(options[2][:300], version=2)
+            
+            ellipsis = '\\.\\.\\.'
+            
             message = (
                 f"*{title_prefix} for Slide {current_slide}*\n\n"
-                "*Generated 3 options. Choose one to add to your presentation:*\n\n"
-                f"*Option 1:*\n{options[0][:300]}{'...' if len(options[0]) > 300 else ''}\n\n"
-                f"*Option 2:*\n{options[1][:300]}{'...' if len(options[1]) > 300 else ''}\n\n"
-                f"*Option 3:*\n{options[2][:300]}{'...' if len(options[2]) > 300 else ''}\n\n"
+                "*Generated 3 options\\. Choose one to add to your presentation:*\n\n"
+                f"*Option 1:*\n{opt1_escaped}{ellipsis if len(options[0]) > 300 else ''}\n\n"
+                f"*Option 2:*\n{opt2_escaped}{ellipsis if len(options[1]) > 300 else ''}\n\n"
+                f"*Option 3:*\n{opt3_escaped}{ellipsis if len(options[2]) > 300 else ''}\n\n"
             )
             
-            # update user state with options
+            # Save previous attempt before updating
+            if state.get("options"):
+                all_attempts.append({
+                    "attempt": generation_attempt - 1,
+                    "options": state.get("options", []),
+                    "selected_index": None  # Previous attempt wasn't selected
+                })
+            
+            # update user state with new options and preserved context
             user_states[chat_id] = {
                 "action": f"select_{action_type}",
                 "presentation_id": presentation_id,
                 "slide": current_slide,
                 "options": options,
                 "slide_type": slide_type,
-                "user_input": ""
+                "user_input": user_input,  # Preserve original context
+                "input_type": input_type,  # Preserve input type
+                "generation_attempt": generation_attempt,
+                "all_attempts": all_attempts
             }
             
             keyboard = [
@@ -1124,7 +1167,7 @@ async def handle_skip_input(query, context, presentation_id: int, action_type: s
             
             await query.edit_message_text(
                 message,
-                parse_mode='Markdown',
+                parse_mode='MarkdownV2',
                 reply_markup=reply_markup
             )
         else:
@@ -1165,6 +1208,16 @@ async def handle_option_selection(query, context, presentation_id: int, option_i
         return
     
     selected_content = options[option_index]
+    generation_attempt = state.get("generation_attempt", 1)
+    all_attempts = state.get("all_attempts", [])
+    
+    # Add current attempt to all_attempts with selected index
+    current_attempt = {
+        "attempt": generation_attempt,
+        "options": options,
+        "selected_index": option_index
+    }
+    all_attempts_final = all_attempts + [current_attempt]
     
     #loading message
     await query.edit_message_text(
@@ -1197,7 +1250,11 @@ async def handle_option_selection(query, context, presentation_id: int, option_i
                 "slide_type": slide_type,
                 "insert_after": insert_after,
                 "user_input": user_input,
-                "telegram_chat_id": chat_id
+                "telegram_chat_id": chat_id,
+                "all_options": options,  # All AI-generated options from current attempt
+                "selected_option_index": option_index,  
+                "generation_attempt": generation_attempt,  
+                "all_attempts": all_attempts_final  # All attempts with options and selections
             },
             timeout=90  # need to test this, to see if its slower than the timeout
         )
@@ -1366,12 +1423,104 @@ def process_link_code(chat_id: int, link_code: str):
         }
 
 
+async def unlink_account(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /unlink command - unlink Telegram from web account"""
+    chat_id = update.effective_chat.id
+    
+    # Check if currently linked
+    try:
+        check_response = requests.get(
+            f"{BACKEND_API_URL}/api/telegram/check/{chat_id}",
+            timeout=5
+        )
+        
+        if check_response.status_code == 404:
+            await update.message.reply_text(
+                "*Not Linked*\n\n"
+                "Your Telegram account is not currently linked to any web account.\n\n"
+                "Use /link to connect your account.",
+                parse_mode='Markdown'
+            )
+            return
+    except Exception as e:
+        print(f"Error checking link status: {e}")
+        await update.message.reply_text(
+            "❌ Error checking account status. Please try again later."
+        )
+        return
+    
+    # Account is linked, proceed with unlinking (added a ton of edge cases just in case)
+    try:
+        unlink_response = requests.post(
+            f"{BACKEND_API_URL}/api/telegram/unlink",
+            json={"telegram_chat_id": chat_id},
+            timeout=10
+        )
+        
+        if unlink_response.status_code == 200:
+            await update.message.reply_text(
+                "✅ *Account Unlinked Successfully!*\n\n"
+                "Your Telegram account has been disconnected from the web app.\n\n"
+                "You can link it again anytime using /link",
+                parse_mode='Markdown'
+            )
+        elif unlink_response.status_code == 400:
+            await update.message.reply_text(
+                "❌ *Unlink Failed*\n\n"
+                "Could not unlink your account. It may already be unlinked.\n\n"
+                "Use /link to check your status.",
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Failed to unlink account. Please try again later."
+            )
+            
+    except requests.exceptions.ConnectionError:
+        await update.message.reply_text(
+            "*Cannot connect to backend*\n\n"
+            "The server is currently unavailable. Please try again later.",
+            parse_mode='Markdown'
+        )
+    except requests.exceptions.Timeout:
+        await update.message.reply_text(
+            "*Request timed out*\n\n"
+            "The server is taking too long to respond. Please try again.",
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        print(f"Error unlinking account: {e}")
+        import traceback
+        traceback.print_exc()
+        await update.message.reply_text(
+            "❌ An error occurred while unlinking. Please try again later."
+        )
+
+
 #got tired of copy pasting the controls xd
 async def show_controls(chat_id, presentation_id, current_slide=1, slide_count=0, context=None):
+    if not bot_app:
+        print(f"[show_controls] ERROR: bot_app is None, cannot send controls")
+        return
+        
     message = (
         "*---------------------------------------------------*\n*---------------------------------------------------*\n\n"
         f"📍 *Slide {current_slide}*" + (f" / {slide_count}" if slide_count else "") + "\n\n"
     )
+    
+    ai_slide = get_ai_slide_for_position(presentation_id, current_slide)
+    if ai_slide:
+        slide_type = ai_slide.get("slide_type", "")
+        answer = ai_slide.get("answer")
+        
+        if answer:
+            type_label = "Quiz" if "quiz" in slide_type else "Question"
+            message += (
+                f"*🎯 {type_label} Slide Answer:*\n"
+                f"_{answer}_\n\n"
+            )
+        elif slide_type and "quiz" in slide_type:
+            message += "*🎯 Quiz Slide* (AI-generated)\n\n"
 
     keyboard = [
         [
@@ -1387,12 +1536,15 @@ async def show_controls(chat_id, presentation_id, current_slide=1, slide_count=0
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
 
-    await context.bot.send_message(
+    sent_message = await bot_app.bot.send_message(
         chat_id=chat_id,
         text=message,
         parse_mode='Markdown',
         reply_markup=reply_markup
     )
+    
+    # Store the new message ID so it can be deleted later
+    active_presentation_messages[chat_id] = sent_message.message_id
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle regular messages"""
@@ -1422,6 +1574,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if input_type == "audio" and transcription:
                 await update.message.reply_text(build_transcription_preview(transcription))
+
+            #delete old control message and preview image before showing loading
+            old_message_id = active_presentation_messages.get(chat_id)
+            if old_message_id and bot_app:
+                try:
+                    await bot_app.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=old_message_id
+                    )
+                    active_presentation_messages.pop(chat_id, None)
+                except Exception:
+                    pass
+            
+            # Delete old preview image too
+            await delete_slide_preview(chat_id)
 
             await update.message.reply_text("Generating examples...\n\n_This may take a few seconds_", parse_mode='Markdown')
             try:
@@ -1476,14 +1643,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "options": options,
                         "slide_type": "example",
                         "user_input": user_input,
-                        "input_type": input_type
+                        "input_type": input_type,
+                        "generation_attempt": 1,
+                        "all_attempts": []
                     }
                     
                     keyboard = [
                         [InlineKeyboardButton("✅ Choose Option 1", callback_data=f"select:0:{presentation_id}")],
                         [InlineKeyboardButton("✅ Choose Option 2", callback_data=f"select:1:{presentation_id}")],
                         [InlineKeyboardButton("✅ Choose Option 3", callback_data=f"select:2:{presentation_id}")],
-                        [InlineKeyboardButton("🔄 Generate New Options", callback_data=f"ai:create_example:{presentation_id}")],
+                        [InlineKeyboardButton("🔄 Generate New Options", callback_data=f"skip:example:{presentation_id}")],
                         [InlineKeyboardButton("❌ Cancel", callback_data=f"ai:menu:{presentation_id}")]
                     ]
                     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1529,6 +1698,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if input_type == "audio" and transcription:
                 await update.message.reply_text(build_transcription_preview(transcription))
+
+            # Delete old control message and preview image before showing loading
+            old_message_id = active_presentation_messages.get(chat_id)
+            if old_message_id and bot_app:
+                try:
+                    await bot_app.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=old_message_id
+                    )
+                    active_presentation_messages.pop(chat_id, None)
+                except Exception:
+                    pass
+            
+            # Delete old preview image too
+            await delete_slide_preview(chat_id)
 
             await update.message.reply_text("Generating quiz questions...\n\n_This may take a few seconds_", parse_mode='Markdown')
             
@@ -1592,7 +1776,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "options": options,
                         "slide_type": slide_type,
                         "user_input": user_input,
-                        "input_type": input_type
+                        "input_type": input_type,
+                        "generation_attempt": 1,
+                        "all_attempts": []
                     }
                     
                     keyboard = [
@@ -1634,6 +1820,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if input_type == "audio" and transcription:
                 await update.message.reply_text(build_transcription_preview(transcription))
+
+            #same shit as before
+            old_message_id = active_presentation_messages.get(chat_id)
+            if old_message_id and bot_app:
+                try:
+                    await bot_app.bot.delete_message(
+                        chat_id=chat_id,
+                        message_id=old_message_id
+                    )
+                    active_presentation_messages.pop(chat_id, None)
+                except Exception:
+                    pass
+            
+            await delete_slide_preview(chat_id)
 
             await update.message.reply_text("Generating summaries...\n\n_This may take a few seconds_", parse_mode='Markdown')
             
@@ -1688,7 +1888,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "options": options,
                         "slide_type": "summary",
                         "user_input": user_input,
-                        "input_type": input_type
+                        "input_type": input_type,
+                        "generation_attempt": 1,
+                        "all_attempts": []
                     }
                     
                     keyboard = [
@@ -1743,8 +1945,43 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             if resp.ok:
-                # Just acknowledge - the WebSocket handler will update the message
+                # Delete the old control message first (this is the whole process I added to fix the control positioning)
+                old_message_id = active_presentation_messages.get(chat_id)
+                if old_message_id and bot_app:
+                    try:
+                        await bot_app.bot.delete_message(
+                            chat_id=chat_id,
+                            message_id=old_message_id
+                        )
+                        active_presentation_messages.pop(chat_id, None)
+                    except Exception:
+                        pass
+                
+                # Delete the old preview image too
+                await delete_slide_preview(chat_id)
+                
+                # Acknowledge the jump
                 await update.message.reply_text(f"✅ Jumping to slide {slide_number}...")
+                
+                # Get presentation info and send new control at bottom
+                try:
+                    pres_resp = requests.get(
+                        f"{BACKEND_API_URL}/api/presentations/{presentation_id}",
+                        timeout=5
+                    )
+                    if pres_resp.ok:
+                        pres_data = pres_resp.json()
+                        current_slide = pres_data.get("current_slide", slide_number)
+                        slide_count = pres_data.get("slide_count", 0)
+                        
+                        # Send new control panel
+                        await show_controls(chat_id, presentation_id, current_slide, slide_count, context)
+                        
+                        # Then send next slide preview after control (so control is above preview)
+                        if current_slide < slide_count:
+                            await send_next_slide_preview(chat_id, presentation_id, current_slide + 1)
+                except Exception as e:
+                    print(f"Error refreshing controls after goto: {e}")
             else:
                 await update.message.reply_text("❌ Could not jump to that slide.")
             
@@ -1994,6 +2231,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("link", link_start))
+    app.add_handler(CommandHandler("unlink", unlink_account))
     app.add_handler(CommandHandler("start_presentation", start_presentation_cmd))
     app.add_handler(CommandHandler("end_presentation", end_presentation_cmd))
     app.add_handler(CommandHandler("next", next_slide_cmd))

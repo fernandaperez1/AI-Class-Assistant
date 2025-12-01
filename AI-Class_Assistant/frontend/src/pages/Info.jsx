@@ -8,13 +8,41 @@ export default function InfoPage() {
   const [info, setInfo] = useState(null);
   const [error, setError] = useState(null);
   const navigate = useNavigate();
-  const [expandedSections, setExpandedSections] = useState({details:true,analytics:true,aiSlides:true});
+  const [expandedSections, setExpandedSections] = useState({details:true,analytics:true,aiSlides:true,aiOverview:true});
+  const [aiOverview, setAiOverview] = useState(null);
+  const [loadingOverview, setLoadingOverview] = useState(false);
+  const [overviewError, setOverviewError] = useState(null);
 
   const toggleSection = (section) => {
     setExpandedSections(prev => ({
       ...prev,
       [section]: !prev[section]
     }));
+  };
+
+  const generateAIOverview = async () => {
+    setLoadingOverview(true);
+    setOverviewError(null);
+    
+    try {
+      const res = await fetch(`${API_URL}/api/classes/${classId}/ai-overview`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      
+      if (!res.ok) {
+        const errorData = await res.json();
+        throw new Error(errorData.error || 'Failed to generate AI overview');
+      }
+      
+      const data = await res.json();
+      setAiOverview(data);
+    } catch (err) {
+      console.error('Error generating AI overview:', err);
+      setOverviewError(err.message);
+    } finally {
+      setLoadingOverview(false);
+    }
   };
 
   useEffect(() => {
@@ -100,13 +128,64 @@ export default function InfoPage() {
   return (
     <div className="info-page">
       <div className="info-container">
-        <h1>Presentation Info</h1>
+        <h1 className="page-title">Presentation Info</h1>
         {error && <p className="error-text">{error}</p>}
 
         {!info && !error && <p>Loading presentation info...</p>}
 
         {info && (
           <>
+            {/* AI Overview Section */}
+            <div className="info-card ai-overview-card">
+              <div className="card-header" onClick={() => toggleSection('aiOverview')}>
+                <h2>AI Teaching Insights</h2>
+                <span className="collapse-icon">{expandedSections.aiOverview ? '▼' : '▶'}</span>
+              </div>
+              {expandedSections.aiOverview && (
+              <div className="card-content">
+                {!aiOverview && (
+                  <div className="overview-prompt">
+                    <p>Get AI-powered feedback on your teaching performance and suggestions for improvement.</p>
+                    <button 
+                      className="generate-overview-button"
+                      onClick={generateAIOverview}
+                      disabled={loadingOverview}
+                    >
+                      {loadingOverview ? '🔄 Generating Insights...' : '✨ Generate AI Overview'}
+                    </button>
+                    {overviewError && (
+                      <p className="error-text" style={{marginTop: '10px'}}>
+                        Error: {overviewError}
+                      </p>
+                    )}
+                  </div>
+                )}
+                
+                {aiOverview && !aiOverview.error && (
+                  <div className="overview-results">
+                    <div className="feedback-section positive-feedback">
+                      <h3>✅ What You Did Well</h3>
+                      <p>{aiOverview.positive_feedback}</p>
+                    </div>
+                    
+                    <div className="feedback-section improvement-feedback">
+                      <h3>💡 Suggestion for Improvement</h3>
+                      <p>{aiOverview.improvement_suggestion}</p>
+                    </div>
+                    
+                    <button 
+                      className="regenerate-button"
+                      onClick={generateAIOverview}
+                      disabled={loadingOverview}
+                    >
+                      {loadingOverview ? 'Regenerating...' : '🔄 Regenerate Insights'}
+                    </button>
+                  </div>
+                )}
+              </div>
+              )}
+            </div>
+
             <div className="info-card">
               <div className="card-header" onClick={() => toggleSection('details')}>
                 <h2>Presentation Details</h2>
@@ -287,22 +366,81 @@ export default function InfoPage() {
                           <div className="ai-slide-header">
                             <span className="ai-slide-number">AI Slide #{index + 1}</span>
                             <span className="ai-slide-position">Position: {slide.slide_index}</span>
+                            {slide.slide_type && (
+                              <span className="ai-slide-type">{slide.slide_type}</span>
+                            )}
                             <span className="ai-slide-date">{formatTimestamp(slide.created_at)}</span>
                           </div>
                           
                           {slide.user_input && (
                             <div className="ai-slide-section">
-                              <h4>User Input:</h4>
-                              <p>{slide.user_input}</p>
+                              <h4>💬 User Context:</h4>
+                              <p className="user-context">{slide.user_input}</p>
                             </div>
                           )}
                           
-                          <div className="ai-slide-section">
-                            <h4>Generated Content:</h4>
-                            <div className="ai-slide-content">
-                              {slide.slide_content}
+                          {slide.all_attempts && slide.all_attempts.length > 0 ? (
+                            <div className="ai-slide-section">
+                              <h4>🔄 Generation Attempts ({slide.all_attempts.length}):</h4>
+                              {slide.all_attempts.map((attempt, attemptIdx) => (
+                                <div key={attemptIdx} className="attempt-group">
+                                  <div className="attempt-header">
+                                    <strong>Attempt {attempt.attempt}</strong>
+                                    {attempt.selected_index !== null && attempt.selected_index !== undefined && (
+                                      <span className="attempt-selected-badge">✓ Used This Attempt</span>
+                                    )}
+                                  </div>
+                                  <div className="ai-options-list">
+                                    {attempt.options && attempt.options.map((option, optIdx) => (
+                                      <div 
+                                        key={optIdx} 
+                                        className={`ai-option ${
+                                          optIdx === attempt.selected_index ? 'selected' : ''
+                                        }`}
+                                      >
+                                        <div className="option-header">
+                                          <span className="option-number">Option {optIdx + 1}</span>
+                                          {optIdx === attempt.selected_index && (
+                                            <span className="selected-badge">✓ Selected</span>
+                                          )}
+                                        </div>
+                                        <div className="option-content">{option}</div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          </div>
+                          ) : slide.all_options && slide.all_options.length > 0 ? (
+                            <div className="ai-slide-section">
+                              <h4>AI-Generated Options:</h4>
+                              <div className="ai-options-list">
+                                {slide.all_options.map((option, optIdx) => (
+                                  <div 
+                                    key={optIdx} 
+                                    className={`ai-option ${
+                                      optIdx === slide.selected_option_index ? 'selected' : ''
+                                    }`}
+                                  >
+                                    <div className="option-header">
+                                      <span className="option-number">Option {optIdx + 1}</span>
+                                      {optIdx === slide.selected_option_index && (
+                                        <span className="selected-badge">✓ Selected</span>
+                                      )}
+                                    </div>
+                                    <div className="option-content">{option}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="ai-slide-section">
+                              <h4>📝 Generated Content:</h4>
+                              <div className="ai-slide-content">
+                                {slide.slide_content}
+                              </div>
+                            </div>
+                          )}
                           
                           {slide.answer && (
                             <div className="ai-slide-section">

@@ -11,7 +11,6 @@ export default function HomePage({ user }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [codeExpiry, setCodeExpiry] = useState(null);
-  const [isTelegramOpen, setIsTelegramOpen] = useState(false);
   const [showModal, setShowModal] = useState(false);
   const [classes, setClasses] = useState([]);
   const [isUnlinking, setIsUnlinking] = useState(false);
@@ -19,6 +18,7 @@ export default function HomePage({ user }) {
   const navigate = useNavigate();
 
   const isTelegramLinked = user?.telegram_chat_id !== null;
+  const [isTelegramOpen, setIsTelegramOpen] = useState(!isTelegramLinked);
 
   const fetchClasses = async () => {
     try {
@@ -308,7 +308,10 @@ export default function HomePage({ user }) {
                                     </li>
                                     <li>Start a chat with the bot</li>
                                     <li>
-                                        Send: <code>/link {linkCode}</code>
+                                        Send: <code>/link</code>
+                                    </li>
+                                    <li>
+                                        Send: <code>{linkCode}</code>
                                     </li>
                                 </ol>
                             </div>
@@ -414,6 +417,12 @@ export default function HomePage({ user }) {
             onClose={() => setShowModal(false)}
             onClassCreated={handleClassCreated}
           />
+        )}
+        {loading && (
+          <div className="loading-overlay">
+            <div className="loading-spinner"></div>
+            <p>Resetting presentation…</p>
+          </div>
         )}
       </div>
     </div>
